@@ -147,3 +147,13 @@ rootProject.subprojects { subproject ->
 flutter {
     source = "../.."
 }
+
+// alex-hack: personal builds get their own app ID and name so they install next to the
+// official app. Only active with -PalexHack=<build>; upstream builds are unchanged.
+if (project.hasProperty("alexHack")) {
+    android.defaultConfig.applicationId = "uk.a09.dawarich"
+    android.buildTypes.release {
+        versionNameSuffix "-alex." + project.property("alexHack")
+        resValue "string", "app_name", "Dawarich (Alex)"
+    }
+}

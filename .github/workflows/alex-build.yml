@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       JAVA_VERSION: "21"
-      NDK_VERSION: "27.0.12077973"
     steps:
       - uses: actions/checkout@v4
 
@@ -65,30 +64,21 @@ jobs:
             echo "flutter.sdk=${FLUTTER_SDK}"
           } > android/local.properties
 
-      - name: Cache NDK and CMake
-        uses: actions/cache@v4
-        id: cache-ndk-cmake
-        with:
-          path: |
-            /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
-            /usr/local/lib/android/sdk/cmake/3.22.1
-          key: android-ndk-${{ env.NDK_VERSION }}-cmake-3.22.1-v1
-
-      - name: Install NDK and CMake (if not cached)
-        if: steps.cache-ndk-cmake.outputs.cache-hit != 'true'
+      # Same as upstream's workflows since 0.21: use the runner's preinstalled NDK.
+      - name: Use preinstalled NDK and turn on alex-hack identity
         shell: bash
         run: |
           set -euo pipefail
           SDK_DIR="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          "${SDK_DIR}/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" "cmake;3.22.1"
-
-      - name: Pin NDK version and turn on alex-hack identity
-        shell: bash
-        run: |
-          set -euo pipefail
+          NDK_DIR="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-${ANDROID_NDK:-${ANDROID_NDK_LATEST_HOME:-}}}}"
+          if [ -z "${NDK_DIR}" ]; then
+            NDK_DIR=$(ls -d "${SDK_DIR}/ndk/"* 2>/dev/null | sort -V | tail -1 || true)
+          fi
+          [ -n "${NDK_DIR}" ] && [ -d "${NDK_DIR}" ] || { echo "::error::No preinstalled NDK found"; exit 1; }
           GP=android/gradle.properties
           sed -i '/^android\.ndkVersion=/d; /^alexHack=/d' "$GP"
-          printf '\nandroid.ndkVersion=%s\nalexHack=%s\n' "$NDK_VERSION" "${{ github.run_number }}" >> "$GP"
+          printf '\nandroid.ndkVersion=%s\nalexHack=%s\n' "$(basename "$NDK_DIR")" "${{ github.run_number }}" >> "$GP"
+          tail -3 "$GP"
 
       - name: Check signing secrets are set
         env:

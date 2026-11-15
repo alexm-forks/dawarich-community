@@ -22,10 +22,37 @@ final class TimelineView extends ConsumerStatefulWidget {
 class _TimelinePageState extends ConsumerState<TimelineView> with TickerProviderStateMixin {
   late final AnimatedMapController _animatedMapController;
 
+  // alex-hack: CurrentLocationLayer runs its own best-accuracy GPS stream (5 s
+  // fixes) that keeps going after the app is backgrounded (upstream #701).
+  // Only build the layer while the app is in the foreground, so the stream is
+  // cancelled when it goes to the background and restarted on return.
+  late final AppLifecycleListener _lifecycleListener;
+  bool _appInForeground = true;
+
   @override
   void initState() {
     super.initState();
     _animatedMapController = AnimatedMapController(vsync: this);
+    _appInForeground = _isForeground(WidgetsBinding.instance.lifecycleState);
+    _lifecycleListener = AppLifecycleListener(
+      onStateChange: (state) {
+        final foreground = _isForeground(state);
+        if (mounted && foreground != _appInForeground) {
+          setState(() => _appInForeground = foreground);
+        }
+      },
+    );
+  }
+
+  static bool _isForeground(AppLifecycleState? state) =>
+      state == null ||
+      state == AppLifecycleState.resumed ||
+      state == AppLifecycleState.inactive;
+
+  @override
+  void dispose() {
+    _lifecycleListener.dispose();
+    super.dispose();
   }
 
   @override
@@ -261,7 +288,7 @@ class _TimelinePageState extends ConsumerState<TimelineView> with TickerProvider
             TileLayer(
               urlTemplate:
                   'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.sunstep.travel',
+              userAgentPackageName: 'dev.abralabs.travel',
               maxNativeZoom: 19,
             ),
             // --- API points (historical) ---
@@ -325,6 +352,10 @@ class _TimelinePageState extends ConsumerState<TimelineView> with TickerProvider
                   );
                 }).toList(),
               ),
+          // Only show the live position marker when viewing today — on
+          // historical dates it would be confusing and out-of-sync with
+          // the displayed track.
+          if (mapModel.isTodaySelected() && _appInForeground)
             const CurrentLocationLayer(),
           ],
         ),

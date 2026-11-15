@@ -12,6 +12,11 @@ abstract interface class ITrackerEngine {
   Future<tl.State> stopTracking();
   Future<tl.State> configure(TrackerSettings settings);
   Future<tl.State> updateConfiguration(TrackerSettings settings);
+
+  /// alex-hack: re-checks whether the phone is charging and, if that changed
+  /// since the configuration was last applied, re-applies it so the charging
+  /// boost is switched on or off.
+  Future<void> refreshChargingBoost();
   Future<void> updateForegroundNotification({
     String? title,
     String? body,

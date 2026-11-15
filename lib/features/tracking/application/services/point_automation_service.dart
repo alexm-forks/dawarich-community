@@ -390,7 +390,15 @@ final class PointAutomationService {
     if (kDebugMode) {
       debugPrint('[PointAutomation] Tracelet heartbeat received.');
     }
-    
+
+    // alex-hack: the heartbeat (every 60 s) is where plugging in or
+    // unplugging gets noticed.
+    try {
+      await _trackerEngine.refreshChargingBoost();
+    } catch (e, s) {
+      debugPrint('[PointAutomation] Charging boost refresh error: $e\n$s');
+    }
+
     await _refreshNotification(userId);
   }
 

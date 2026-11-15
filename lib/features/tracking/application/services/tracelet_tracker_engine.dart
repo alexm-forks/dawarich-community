@@ -8,6 +8,7 @@ import 'package:dawarich/features/tracking/domain/enum/tracking_mode.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:dawarich/features/tracking/domain/models/tracker_settings.dart';
 
+import 'package:battery_plus/battery_plus.dart' as battery_plus;
 import 'package:flutter/foundation.dart';
 import 'package:tracelet/tracelet.dart' as tl;
 
@@ -18,6 +19,23 @@ final class TraceletTrackerEngine implements ITrackerEngine {
 
   static const int _streamLocationUpdateIntervalMs = 5000;
   static const int _fastestStreamLocationUpdateIntervalMs = 2500;
+
+  // alex-hack: automatic mode asks for a fix every 5 minutes while moving, so
+  // GPS can power down between fixes, but accepts fixes up to every 5 s that
+  // another app (e.g. navigation) is already paying for.
+  static const int _automaticMovingIntervalMs = 5 * 60 * 1000;
+  static const int _automaticFastestIntervalMs = 5000;
+
+  // alex-hack: while charging, automatic mode tracks densely instead: a fix
+  // every 2 s at the best accuracy, at most 5 m apart, no battery budget.
+  // Motion detection stays on, so a phone sitting still on a charger still
+  // turns GPS off.
+  static const int _chargingIntervalMs = 2000;
+  static const int _chargingFastestIntervalMs = 1000;
+  static const double _chargingMaxDistanceFilterMeters = 5.0;
+
+  static TrackerSettings? _lastAppliedSettings;
+  static bool _chargingBoostApplied = false;
 
   static const int _heartbeatIntervalSeconds = 60;
   static const int _automaticStopTimeoutMinutes = 5;
@@ -228,7 +246,7 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       );
     }
 
-    final tl.Config config = _buildConfiguration(settings);
+    final tl.Config config = await _buildConfigurationWithChargingState(settings);
 
     _registerTraceletLocationCallbackOnce();
     _registerTraceletHeartbeatOnce();
@@ -245,8 +263,71 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   @override
   Future<tl.State> updateConfiguration(TrackerSettings settings) async {
 
-    final tl.Config config = _buildConfiguration(settings);
+    final tl.Config config = await _buildConfigurationWithChargingState(settings);
     return await tl.Tracelet.setConfig(config);
+  }
+
+  @override
+  Future<void> refreshChargingBoost() async {
+    final TrackerSettings? settings = _lastAppliedSettings;
+
+    if (settings == null || settings.trackingMode != TrackingMode.automatic) {
+      return;
+    }
+
+    final bool charging = await _isCharging();
+
+    if (charging == _chargingBoostApplied) {
+      return;
+    }
+
+    if (kDebugMode) {
+      debugPrint('$debugPrefix Charging changed to $charging; re-applying config.');
+    }
+
+    await updateConfiguration(settings);
+  }
+
+  /// Reads the charging state right before building, so every isolate that
+  /// applies a configuration applies the same one.
+  Future<tl.Config> _buildConfigurationWithChargingState(
+    TrackerSettings settings,
+  ) async {
+    final bool boost =
+        settings.trackingMode == TrackingMode.automatic && await _isCharging();
+
+    _lastAppliedSettings = settings;
+    _chargingBoostApplied = boost;
+
+    return _buildConfiguration(settings, chargingBoost: boost);
+  }
+
+  /// Exposes [_buildConfiguration] to tests without touching the platform.
+  @visibleForTesting
+  tl.Config buildConfigurationForTest(
+    TrackerSettings settings, {
+    bool chargingBoost = false,
+  }) =>
+      _buildConfiguration(settings, chargingBoost: chargingBoost);
+
+  static Future<bool> _isCharging() async {
+    try {
+      final battery_plus.BatteryState state =
+          await battery_plus.Battery().batteryState;
+
+      return switch (state) {
+        battery_plus.BatteryState.charging ||
+        battery_plus.BatteryState.full ||
+        battery_plus.BatteryState.connectedNotCharging => true,
+        _ => false,
+      };
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[TraceletTrackerEngine] Battery state unavailable: $error');
+      }
+
+      return false;
+    }
   }
 
   @override
@@ -271,32 +352,43 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     await tl.Tracelet.updateNotification();
   }
 
-  tl.Config _buildConfiguration(TrackerSettings settings) {
+  tl.Config _buildConfiguration(
+    TrackerSettings settings, {
+    bool chargingBoost = false,
+  }) {
 
     final bool isAutoMode = settings.trackingMode == TrackingMode.automatic;
+    final bool boost = isAutoMode && chargingBoost;
 
-    final double distanceFilter = settings.effectiveMinimumPointDistanceMeters
+    final double configuredDistanceFilter = settings
+        .effectiveMinimumPointDistanceMeters
         .toDouble();
+    final double distanceFilter = boost &&
+            configuredDistanceFilter > _chargingMaxDistanceFilterMeters
+        ? _chargingMaxDistanceFilterMeters
+        : configuredDistanceFilter;
 
     final tl.GeoConfig geoConfig = tl.GeoConfig(
-      desiredAccuracy: _mapDesiredAccuracy(settings.locationPrecision),
+      desiredAccuracy: boost
+          ? tl.DesiredAccuracy.high
+          : _mapDesiredAccuracy(settings.locationPrecision),
       distanceFilter: distanceFilter,
       stationaryRadius: isAutoMode
           ? _automaticStationaryRadiusMeters
           : _defaultStationaryRadiusMeters,
       locationTimeout: 60,
-      disableElasticity: false,
+      disableElasticity: boost,
       elasticityMultiplier: 1.0,
       stopAfterElapsedMinutes: -1,
       maxMonitoredGeofences: -1,
       enableTimestampMeta: false,
-      enableAdaptiveMode: isAutoMode,
+      enableAdaptiveMode: isAutoMode && !boost,
       periodicLocationInterval: _resolvePeriodicLocationInterval(settings),
       periodicDesiredAccuracy: _mapDesiredAccuracy(settings.locationPrecision),
       enableSparseUpdates: false,
       sparseDistanceThreshold: 50.0,
       sparseMaxIdleSeconds: 300,
-      batteryBudgetPerHour: 2.0,
+      batteryBudgetPerHour: boost ? 0.0 : 2.0,
       enableDeadReckoning: false,
       deadReckoningActivationDelay: 0,
       deadReckoningMaxDuration: 0,
@@ -329,8 +421,16 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     );
 
     final tl.AndroidConfig androidConfig = tl.AndroidConfig(
-      locationUpdateInterval: _streamLocationUpdateIntervalMs,
-      fastestLocationUpdateInterval: _fastestStreamLocationUpdateIntervalMs,
+      locationUpdateInterval: !isAutoMode
+          ? _streamLocationUpdateIntervalMs
+          : boost
+              ? _chargingIntervalMs
+              : _automaticMovingIntervalMs,
+      fastestLocationUpdateInterval: !isAutoMode
+          ? _fastestStreamLocationUpdateIntervalMs
+          : boost
+              ? _chargingFastestIntervalMs
+              : _automaticFastestIntervalMs,
       deferTime: 0,
       allowIdenticalLocations: false,
       periodicUseForegroundService: true,

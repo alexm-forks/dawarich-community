@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
+import 'package:dawarich/features/tracking/presentation/views/wifi_places_view.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:dawarich/core/di/providers/viewmodel_providers.dart';
 import 'package:dawarich/core/routing/app_router.dart';
@@ -325,7 +326,7 @@ class _SettingsCard extends StatefulWidget {
 class _SettingsCardState extends State<_SettingsCard> {
   late PageController _pageController;
   int _currentPage = 0;
-  static const int _pageCount = 8;
+  static const int _pageCount = 9;
 
   @override
   void initState() {
@@ -387,6 +388,7 @@ class _SettingsCardState extends State<_SettingsCard> {
                 _TrackingHeroPage(),
                 _FrequencyPage(),
                 _AutoModePage(),
+                _WifiPlacesPage(),
                 _MinimumPointDistancePage(),
                 _BatchingPage(),
                 _BatchExpirationPage(),
@@ -747,6 +749,54 @@ class _AutoModePage extends StatelessWidget {
             subtitle: const Text('Fix every 2 s at best accuracy when plugged in'),
             value: vm.chargingBoost,
             onChanged: vm.setChargingBoost,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// alex-hack: entry to the Wi-Fi Places screen.
+class _WifiPlacesPage extends StatelessWidget {
+  const _WifiPlacesPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.wifi_rounded,
+            size: 48,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Wi-Fi Places',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Link your Wi-Fi to Dawarich places. On known Wi-Fi, GPS is '
+            'paused and your location is recorded at the place.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const WifiPlacesView()),
+            ),
+            icon: const Icon(Icons.settings_input_antenna),
+            label: const Text('Manage Wi-Fi places'),
           ),
         ],
       ),

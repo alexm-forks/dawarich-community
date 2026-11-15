@@ -8,6 +8,7 @@ import 'package:dawarich/features/tracking/application/usecases/point_creation/c
 import 'package:dawarich/features/tracking/application/usecases/point_creation/store_point_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/settings/get_tracker_settings_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/settings/save_tracker_settings_usecase.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:dawarich/features/tracking/domain/models/tracker_settings.dart';
 import 'package:flutter/foundation.dart';
@@ -189,6 +190,12 @@ final class PointAutomationService {
     StackTrace? stopStackTrace;
 
     _detachTrackingHandlers();
+
+    // alex-hack: forget any Wi-Fi place, so a later start elsewhere doesn't
+    // record a departure from it.
+    try {
+      await AlexWifiPlaces.setActiveBssid(null);
+    } catch (_) {}
 
     try {
       await _persistAutomaticTracking(userId, false);
@@ -381,13 +388,24 @@ final class PointAutomationService {
   Future<void> _handleLocationFix({
     required LocationFix locationFix,
     required int userId,
+    bool skipValidation = false,
   }) async {
+
+    // alex-hack: at a Wi-Fi place the place's own points stand in for GPS, so
+    // stray fixes (other apps' GPS, indoor drift) are dropped.
+    if (!skipValidation && await AlexWifiPlaces.isPaused()) {
+      if (kDebugMode) {
+        debugPrint('[PointAutomation] At a Wi-Fi place; fix dropped.');
+      }
+      return;
+    }
 
     try {
       final pointResult = await _createPoint(
         position: locationFix,
         timestamp: locationFix.timestampUtc,
         userId: userId,
+        skipValidation: skipValidation,
       );
 
       if (pointResult case Ok(value: final point)) {
@@ -421,8 +439,14 @@ final class PointAutomationService {
       debugPrint('[PointAutomation] Tracelet heartbeat received.');
     }
 
-    // alex-hack: the heartbeat (every 60 s) is where plugging in or
-    // unplugging gets noticed.
+    // alex-hack: the heartbeat (every 60 s) is where arriving at or leaving
+    // a Wi-Fi place, and plugging in or unplugging, get noticed.
+    try {
+      await _checkWifiPlace(userId);
+    } catch (e, s) {
+      debugPrint('[PointAutomation] Wi-Fi place check error: $e\n$s');
+    }
+
     try {
       await _trackerEngine.refreshChargingBoost();
     } catch (e, s) {
@@ -430,6 +454,89 @@ final class PointAutomationService {
     }
 
     await _refreshNotification(userId);
+  }
+
+  /// alex-hack: pauses GPS while connected to a Wi-Fi access point linked to a
+  /// Dawarich place, and records points at the place instead: one on arrival,
+  /// one every [AlexWifiPlaces.presenceInterval] while there, and one on
+  /// leaving. Normal tracking resumes as soon as the phone is off that Wi-Fi.
+  Future<void> _checkWifiPlace(int userId) async {
+    final String? activeBssid = await AlexWifiPlaces.activeBssid();
+    final WifiPlaceLink? activeLink =
+        activeBssid == null ? null : await AlexWifiPlaces.linkFor(activeBssid);
+
+    WifiPlaceLink? currentLink;
+    if (await AlexWifiPlaces.enabled()) {
+      final CurrentWifi? wifi = await AlexWifiPlaces.current();
+      if (wifi != null) {
+        currentLink = await AlexWifiPlaces.linkFor(wifi.bssid);
+      }
+    }
+
+    final DateTime now = DateTime.now().toUtc();
+
+    if (currentLink != null &&
+        activeLink != null &&
+        AlexWifiPlaces.normaliseBssid(currentLink.bssid) ==
+            AlexWifiPlaces.normaliseBssid(activeLink.bssid)) {
+      final DateTime? last = await AlexWifiPlaces.lastPresencePointAt();
+      if (last == null ||
+          now.difference(last.toUtc()) >= AlexWifiPlaces.presenceInterval) {
+        await _recordWifiPlacePoint(userId, currentLink, now);
+      }
+      return;
+    }
+
+    if (activeBssid != null) {
+      // Left the place (or the link was deleted, or the feature turned off).
+      if (activeLink != null) {
+        await _recordWifiPlacePoint(userId, activeLink, now);
+      }
+      await AlexWifiPlaces.setActiveBssid(null);
+      if (kDebugMode) {
+        debugPrint('[PointAutomation] Left Wi-Fi place; resuming GPS.');
+      }
+    }
+
+    if (currentLink != null) {
+      await AlexWifiPlaces.setActiveBssid(currentLink.bssid);
+      await _recordWifiPlacePoint(userId, currentLink, now);
+      if (kDebugMode) {
+        debugPrint(
+          '[PointAutomation] At Wi-Fi place ${currentLink.placeName}; pausing GPS.',
+        );
+      }
+    }
+
+    if (activeBssid != null || currentLink != null) {
+      final TrackerSettings settings = await _getTrackerSettings(userId);
+      await _trackerEngine.updateConfiguration(settings);
+    }
+  }
+
+  Future<void> _recordWifiPlacePoint(
+    int userId,
+    WifiPlaceLink link,
+    DateTime timestampUtc,
+  ) async {
+    await _handleLocationFix(
+      userId: userId,
+      skipValidation: true,
+      locationFix: LocationFix(
+        latitude: link.latitude,
+        longitude: link.longitude,
+        timestampUtc: timestampUtc,
+        hAccuracyMeters: 10,
+        altitudeMeters: 0,
+        altitudeAccuracyMeters: 0,
+        speedMps: 0,
+        speedAccuracyMps: 0,
+        headingDegrees: 0,
+        headingAccuracyDegrees: 0,
+        provider: 'alex-wifi-place',
+      ),
+    );
+    await AlexWifiPlaces.setLastPresencePointAt(timestampUtc);
   }
 
   Future<void> _refreshNotification(int userId) async {

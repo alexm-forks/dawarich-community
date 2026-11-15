@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:dawarich/core/constants/notification.dart';
 import 'package:dawarich/features/tracking/application/interfaces/tracker_engine_interface.dart';
 import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dart';
 import 'package:dawarich/features/tracking/domain/enum/location_precision.dart';
 import 'package:dawarich/features/tracking/domain/enum/tracking_mode.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
@@ -34,6 +35,9 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   static const int _chargingIntervalMs = 2000;
   static const int _chargingFastestIntervalMs = 1000;
   static const double _chargingMaxDistanceFilterMeters = 5.0;
+
+  // alex-hack: while connected to a Wi-Fi place, never power GPS.
+  static const int _wifiPlaceIntervalMs = 15 * 60 * 1000;
 
   static TrackerSettings? _lastAppliedSettings;
   static bool _chargingBoostApplied = false;
@@ -276,8 +280,9 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       return;
     }
 
-    final bool boost =
-        await AlexTrackingPreferences.chargingBoost() && await _isCharging();
+    final bool boost = !await AlexWifiPlaces.isPaused() &&
+        await AlexTrackingPreferences.chargingBoost() &&
+        await _isCharging();
 
     if (boost == _chargingBoostApplied) {
       return;
@@ -297,7 +302,9 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     TrackerSettings settings,
   ) async {
     final bool isAutoMode = settings.trackingMode == TrackingMode.automatic;
+    final bool wifiPaused = await AlexWifiPlaces.isPaused();
     final bool boost = isAutoMode &&
+        !wifiPaused &&
         await AlexTrackingPreferences.chargingBoost() &&
         await _isCharging();
     final int movingIntervalSeconds =
@@ -310,6 +317,7 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       settings,
       chargingBoost: boost,
       movingIntervalSeconds: movingIntervalSeconds,
+      wifiPaused: wifiPaused,
     );
   }
 
@@ -320,11 +328,13 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     bool chargingBoost = false,
     int movingIntervalSeconds =
         AlexTrackingPreferences.defaultMovingIntervalSeconds,
+    bool wifiPaused = false,
   }) =>
       _buildConfiguration(
         settings,
         chargingBoost: chargingBoost,
         movingIntervalSeconds: movingIntervalSeconds,
+        wifiPaused: wifiPaused,
       );
 
   static Future<bool> _isCharging() async {
@@ -374,10 +384,11 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     bool chargingBoost = false,
     int movingIntervalSeconds =
         AlexTrackingPreferences.defaultMovingIntervalSeconds,
+    bool wifiPaused = false,
   }) {
 
     final bool isAutoMode = settings.trackingMode == TrackingMode.automatic;
-    final bool boost = isAutoMode && chargingBoost;
+    final bool boost = isAutoMode && chargingBoost && !wifiPaused;
 
     final double configuredDistanceFilter = settings
         .effectiveMinimumPointDistanceMeters
@@ -388,9 +399,11 @@ final class TraceletTrackerEngine implements ITrackerEngine {
         : configuredDistanceFilter;
 
     final tl.GeoConfig geoConfig = tl.GeoConfig(
-      desiredAccuracy: boost
-          ? tl.DesiredAccuracy.high
-          : _mapDesiredAccuracy(settings.locationPrecision),
+      desiredAccuracy: wifiPaused
+          ? tl.DesiredAccuracy.passive
+          : boost
+              ? tl.DesiredAccuracy.high
+              : _mapDesiredAccuracy(settings.locationPrecision),
       distanceFilter: distanceFilter,
       stationaryRadius: isAutoMode
           ? _automaticStationaryRadiusMeters
@@ -402,8 +415,12 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       maxMonitoredGeofences: -1,
       enableTimestampMeta: false,
       enableAdaptiveMode: isAutoMode && !boost,
-      periodicLocationInterval: _resolvePeriodicLocationInterval(settings),
-      periodicDesiredAccuracy: _mapDesiredAccuracy(settings.locationPrecision),
+      periodicLocationInterval: wifiPaused
+          ? _wifiPlaceIntervalMs ~/ 1000
+          : _resolvePeriodicLocationInterval(settings),
+      periodicDesiredAccuracy: wifiPaused
+          ? tl.DesiredAccuracy.passive
+          : _mapDesiredAccuracy(settings.locationPrecision),
       enableSparseUpdates: false,
       sparseDistanceThreshold: 50.0,
       sparseMaxIdleSeconds: 300,
@@ -440,12 +457,16 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     );
 
     final tl.AndroidConfig androidConfig = tl.AndroidConfig(
-      locationUpdateInterval: !isAutoMode
+      locationUpdateInterval: wifiPaused
+          ? _wifiPlaceIntervalMs
+          : !isAutoMode
           ? _streamLocationUpdateIntervalMs
           : boost
               ? _chargingIntervalMs
               : movingIntervalSeconds * 1000,
-      fastestLocationUpdateInterval: !isAutoMode
+      fastestLocationUpdateInterval: wifiPaused
+          ? _wifiPlaceIntervalMs
+          : !isAutoMode
           ? _fastestStreamLocationUpdateIntervalMs
           : boost
               ? _chargingFastestIntervalMs

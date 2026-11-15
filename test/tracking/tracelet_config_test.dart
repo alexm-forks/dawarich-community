@@ -79,6 +79,20 @@ void main() {
     expect(config.android.fastestLocationUpdateInterval, 5000);
   });
 
+  test('at a Wi-Fi place: passive accuracy, no charging boost', () {
+    final tl.Config config = engine.buildConfigurationForTest(
+      settings(frequency: 0),
+      chargingBoost: true,
+      wifiPaused: true,
+    );
+
+    expect(config.geo.desiredAccuracy, tl.DesiredAccuracy.passive);
+    expect(config.android.locationUpdateInterval, 15 * 60 * 1000);
+    expect(config.android.fastestLocationUpdateInterval, 15 * 60 * 1000);
+    expect(config.geo.batteryBudgetPerHour, 2.0);
+    expect(config.geo.distanceFilter, 10.0);
+  });
+
   test('timer mode is unchanged, charging or not', () {
     for (final bool charging in [false, true]) {
       final tl.Config config = engine.buildConfigurationForTest(

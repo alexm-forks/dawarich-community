@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:dawarich/core/constants/notification.dart';
 import 'package:dawarich/features/tracking/application/interfaces/tracker_engine_interface.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:dawarich/features/tracking/domain/enum/location_precision.dart';
 import 'package:dawarich/features/tracking/domain/enum/tracking_mode.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
@@ -20,10 +21,10 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   static const int _streamLocationUpdateIntervalMs = 5000;
   static const int _fastestStreamLocationUpdateIntervalMs = 2500;
 
-  // alex-hack: automatic mode asks for a fix every 5 minutes while moving, so
-  // GPS can power down between fixes, but accepts fixes up to every 5 s that
-  // another app (e.g. navigation) is already paying for.
-  static const int _automaticMovingIntervalMs = 5 * 60 * 1000;
+  // alex-hack: automatic mode asks for a fix every N seconds while moving
+  // (set in the app, default 5 minutes), so GPS can power down between fixes,
+  // but accepts fixes up to every 5 s that another app (e.g. navigation) is
+  // already paying for.
   static const int _automaticFastestIntervalMs = 5000;
 
   // alex-hack: while charging, automatic mode tracks densely instead: a fix
@@ -275,31 +276,41 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       return;
     }
 
-    final bool charging = await _isCharging();
+    final bool boost =
+        await AlexTrackingPreferences.chargingBoost() && await _isCharging();
 
-    if (charging == _chargingBoostApplied) {
+    if (boost == _chargingBoostApplied) {
       return;
     }
 
     if (kDebugMode) {
-      debugPrint('$debugPrefix Charging changed to $charging; re-applying config.');
+      debugPrint('$debugPrefix Charging boost changed to $boost; re-applying config.');
     }
 
     await updateConfiguration(settings);
   }
 
-  /// Reads the charging state right before building, so every isolate that
-  /// applies a configuration applies the same one.
+  /// Reads the alex-hack preferences and the charging state right before
+  /// building, so every isolate that applies a configuration applies the same
+  /// one.
   Future<tl.Config> _buildConfigurationWithChargingState(
     TrackerSettings settings,
   ) async {
-    final bool boost =
-        settings.trackingMode == TrackingMode.automatic && await _isCharging();
+    final bool isAutoMode = settings.trackingMode == TrackingMode.automatic;
+    final bool boost = isAutoMode &&
+        await AlexTrackingPreferences.chargingBoost() &&
+        await _isCharging();
+    final int movingIntervalSeconds =
+        await AlexTrackingPreferences.movingIntervalSeconds();
 
     _lastAppliedSettings = settings;
     _chargingBoostApplied = boost;
 
-    return _buildConfiguration(settings, chargingBoost: boost);
+    return _buildConfiguration(
+      settings,
+      chargingBoost: boost,
+      movingIntervalSeconds: movingIntervalSeconds,
+    );
   }
 
   /// Exposes [_buildConfiguration] to tests without touching the platform.
@@ -307,8 +318,14 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   tl.Config buildConfigurationForTest(
     TrackerSettings settings, {
     bool chargingBoost = false,
+    int movingIntervalSeconds =
+        AlexTrackingPreferences.defaultMovingIntervalSeconds,
   }) =>
-      _buildConfiguration(settings, chargingBoost: chargingBoost);
+      _buildConfiguration(
+        settings,
+        chargingBoost: chargingBoost,
+        movingIntervalSeconds: movingIntervalSeconds,
+      );
 
   static Future<bool> _isCharging() async {
     try {
@@ -355,6 +372,8 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   tl.Config _buildConfiguration(
     TrackerSettings settings, {
     bool chargingBoost = false,
+    int movingIntervalSeconds =
+        AlexTrackingPreferences.defaultMovingIntervalSeconds,
   }) {
 
     final bool isAutoMode = settings.trackingMode == TrackingMode.automatic;
@@ -425,12 +444,14 @@ final class TraceletTrackerEngine implements ITrackerEngine {
           ? _streamLocationUpdateIntervalMs
           : boost
               ? _chargingIntervalMs
-              : _automaticMovingIntervalMs,
+              : movingIntervalSeconds * 1000,
       fastestLocationUpdateInterval: !isAutoMode
           ? _fastestStreamLocationUpdateIntervalMs
           : boost
               ? _chargingFastestIntervalMs
-              : _automaticFastestIntervalMs,
+              : movingIntervalSeconds * 1000 < _automaticFastestIntervalMs
+                  ? movingIntervalSeconds * 1000
+                  : _automaticFastestIntervalMs,
       deferTime: 0,
       allowIdenticalLocations: false,
       periodicUseForegroundService: true,

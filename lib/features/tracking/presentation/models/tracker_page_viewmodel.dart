@@ -16,6 +16,7 @@ import 'package:dawarich/features/tracking/application/usecases/track/end_track_
 import 'package:dawarich/features/tracking/application/usecases/track/get_active_track_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/track/start_track_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/track/watch_batch_point_count_usecase.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:dawarich/features/tracking/domain/enum/location_precision.dart';
 import 'package:dawarich/features/tracking/domain/models/last_point.dart';
 import 'package:dawarich/core/domain/models/point/local/local_point.dart';
@@ -198,6 +199,14 @@ final class TrackerPageViewModel extends ChangeNotifier with SafeChangeNotifier 
   int _trackingFrequency = 10; // in seconds
   int get trackingFrequency => _trackingFrequency;
 
+  // alex-hack: automatic-mode settings kept in shared preferences.
+  int _movingIntervalSeconds =
+      AlexTrackingPreferences.defaultMovingIntervalSeconds;
+  int get movingIntervalSeconds => _movingIntervalSeconds;
+
+  bool _chargingBoost = AlexTrackingPreferences.defaultChargingBoost;
+  bool get chargingBoost => _chargingBoost;
+
   LocationPrecision _locationAccuracy =
       Platform.isAndroid ? LocationPrecision.high : LocationPrecision.best;
   LocationPrecision get locationAccuracy => _locationAccuracy;
@@ -216,6 +225,8 @@ final class TrackerPageViewModel extends ChangeNotifier with SafeChangeNotifier 
 
   Future<void> initialize() async {
     final Future<void> initialSettingsLoaded = _startTrackerSettingsWatch();
+
+    unawaited(_loadAlexTrackingPreferences());
 
     Stream<Option<LastPoint>> lastPointStream = _streamLastPoint(userId);
 
@@ -619,6 +630,44 @@ final class TrackerPageViewModel extends ChangeNotifier with SafeChangeNotifier 
     final updated = copy.copyWith(trackingFrequency: seconds);
     _applySettings(updated);
     await _saveTrackerSettings(updated);
+    await _applyToRunningTracker(
+      modeChanged: copy.trackingMode != updated.trackingMode,
+    );
+  }
+
+  Future<void> _loadAlexTrackingPreferences() async {
+    _movingIntervalSeconds =
+        await AlexTrackingPreferences.movingIntervalSeconds();
+    _chargingBoost = await AlexTrackingPreferences.chargingBoost();
+    safeNotifyListeners();
+  }
+
+  Future<void> setMovingIntervalSeconds(int seconds) async {
+    _movingIntervalSeconds = seconds;
+    safeNotifyListeners();
+    await AlexTrackingPreferences.setMovingIntervalSeconds(seconds);
+    await _applyToRunningTracker(modeChanged: false);
+  }
+
+  Future<void> setChargingBoost(bool enabled) async {
+    _chargingBoost = enabled;
+    safeNotifyListeners();
+    await AlexTrackingPreferences.setChargingBoost(enabled);
+    await _applyToRunningTracker(modeChanged: false);
+  }
+
+  /// alex-hack: push a saved change to the tracker if it's running.
+  Future<void> _applyToRunningTracker({required bool modeChanged}) async {
+    if (!_isTrackingAutomatically) {
+      return;
+    }
+
+    final Result<(), String> result = await _pointAutomationService
+        .applySettingsIfTracking(userId, modeChanged: modeChanged);
+
+    if (result case Err(value: final message)) {
+      debugPrint('[TrackerPageViewModel] Applying settings failed: $message');
+    }
   }
 
   Future<void> setLocationAccuracy(LocationPrecision accuracy) async {
@@ -632,6 +681,7 @@ final class TrackerPageViewModel extends ChangeNotifier with SafeChangeNotifier 
     final updated = copy.copyWith(locationPrecision: accuracy);
     _applySettings(updated);
     await _saveTrackerSettings(updated);
+    await _applyToRunningTracker(modeChanged: false);
   }
 
 
@@ -646,6 +696,7 @@ final class TrackerPageViewModel extends ChangeNotifier with SafeChangeNotifier 
     final updated = copy.copyWith(minimumPointDistance: meters);
     _applySettings(updated);
     await _saveTrackerSettings(updated);
+    await _applyToRunningTracker(modeChanged: false);
   }
 
   Future<void> setDeviceId(String id) async {

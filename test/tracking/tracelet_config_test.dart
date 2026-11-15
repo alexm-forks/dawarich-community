@@ -59,6 +59,26 @@ void main() {
     expect(config.geo.distanceFilter, 2.0);
   });
 
+  test('automatic mode uses the chosen moving interval', () {
+    final tl.Config config = engine.buildConfigurationForTest(
+      settings(frequency: 0),
+      movingIntervalSeconds: 60,
+    );
+
+    expect(config.android.locationUpdateInterval, 60 * 1000);
+    expect(config.android.fastestLocationUpdateInterval, 5000);
+  });
+
+  test('a 5 s moving interval keeps fastest no slower than the interval', () {
+    final tl.Config config = engine.buildConfigurationForTest(
+      settings(frequency: 0),
+      movingIntervalSeconds: 5,
+    );
+
+    expect(config.android.locationUpdateInterval, 5000);
+    expect(config.android.fastestLocationUpdateInterval, 5000);
+  });
+
   test('timer mode is unchanged, charging or not', () {
     for (final bool charging in [false, true]) {
       final tl.Config config = engine.buildConfigurationForTest(

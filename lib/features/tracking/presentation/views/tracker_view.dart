@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:dawarich/core/di/providers/viewmodel_providers.dart';
 import 'package:dawarich/core/routing/app_router.dart';
@@ -324,7 +325,7 @@ class _SettingsCard extends StatefulWidget {
 class _SettingsCardState extends State<_SettingsCard> {
   late PageController _pageController;
   int _currentPage = 0;
-  static const int _pageCount = 7;
+  static const int _pageCount = 8;
 
   @override
   void initState() {
@@ -385,6 +386,7 @@ class _SettingsCardState extends State<_SettingsCard> {
               children: const [
                 _TrackingHeroPage(),
                 _FrequencyPage(),
+                _AutoModePage(),
                 _MinimumPointDistancePage(),
                 _BatchingPage(),
                 _BatchExpirationPage(),
@@ -651,6 +653,100 @@ class _FrequencyPageState extends State<_FrequencyPage> {
               onSubmitted: (_) => _applyFrequency(vm),
               onEditingComplete: () => _applyFrequency(vm),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// alex-hack: settings for automatic mode (Frequency = Auto).
+class _AutoModePage extends StatelessWidget {
+  const _AutoModePage();
+
+  static String _formatInterval(int seconds) {
+    if (seconds < 60) return '${seconds}s';
+    return '${seconds ~/ 60} min';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<TrackerPageViewModel>();
+    final theme = Theme.of(context);
+    final bool isAuto = vm.trackingFrequency == 0;
+    final int current = vm.movingIntervalSeconds;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.directions_walk_rounded,
+            size: 36,
+            color: isAuto
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Auto Mode',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            isAuto
+                ? 'Fix every ${_formatInterval(current)} while moving; '
+                    'free extra fixes when another app uses GPS'
+                : 'Only used when Frequency is Auto',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: AlexTrackingPreferences.movingIntervalChoices.map((seconds) {
+              final bool isSelected = seconds == current;
+              return ChoiceChip(
+                label: Text(
+                  _formatInterval(seconds),
+                  style: TextStyle(
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    color: isSelected
+                        ? theme.colorScheme.onPrimary
+                        : theme.colorScheme.onSurface,
+                  ),
+                ),
+                selected: isSelected,
+                onSelected: (_) => vm.setMovingIntervalSeconds(seconds),
+                selectedColor: theme.colorScheme.primary,
+                backgroundColor: theme.colorScheme.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(
+                    color: isSelected
+                        ? Colors.transparent
+                        : theme.colorScheme.outlineVariant,
+                  ),
+                ),
+                showCheckmark: false,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Track densely while charging'),
+            subtitle: const Text('Fix every 2 s at best accuracy when plugged in'),
+            value: vm.chargingBoost,
+            onChanged: vm.setChargingBoost,
           ),
         ],
       ),

@@ -246,6 +246,36 @@ final class PointAutomationService {
     return await startTracking(userId);
   }
 
+  /// alex-hack: applies saved settings to a running tracker. Upstream only
+  /// applied them at the next start, so a changed setting did nothing until
+  /// tracking was toggled off and on. Switching between timer and automatic
+  /// mode needs a restart (they start differently); anything else is applied
+  /// in place, falling back to a restart if that fails.
+  Future<Result<(), String>> applySettingsIfTracking(
+    int userId, {
+    required bool modeChanged,
+  }) async {
+    final TrackerSettings settings = await _getTrackerSettings(userId);
+
+    if (!settings.automaticTracking) {
+      return const Ok(());
+    }
+
+    if (!modeChanged) {
+      try {
+        await _trackerEngine.updateConfiguration(settings);
+        return const Ok(());
+      } catch (e, st) {
+        if (kDebugMode) {
+          debugPrint('[PointAutomation] Live settings update failed: $e');
+          debugPrint('$st');
+        }
+      }
+    }
+
+    return await restartTracking(userId);
+  }
+
   Future<void> _cleanupAfterFailedStart() async {
     _detachTrackingHandlers();
 

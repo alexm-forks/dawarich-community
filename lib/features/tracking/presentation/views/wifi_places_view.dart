@@ -1,4 +1,5 @@
 import 'package:dawarich/core/di/providers/core_providers.dart';
+import 'package:dawarich/features/tracking/data/alex_wifi_places_sync.dart';
 import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dart';
 import 'package:dawarich/features/tracking/data/sources/alex_places_remote_source.dart';
 import 'package:flutter/material.dart';
@@ -6,7 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// alex-hack: link Wi-Fi access points (by BSSID) to manually created
 /// Dawarich places. While connected to a linked access point, GPS is paused
-/// and points are recorded at the place.
+/// and points are recorded at the place. Links are stored in the place's note
+/// in Dawarich; the phone keeps a copy for the background tracker.
 class WifiPlacesView extends ConsumerStatefulWidget {
   const WifiPlacesView({super.key});
 
@@ -16,9 +18,16 @@ class WifiPlacesView extends ConsumerStatefulWidget {
 
 class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
   bool _loading = true;
+  bool _busy = false;
   bool _enabled = true;
   CurrentWifi? _current;
   List<WifiPlaceLink> _links = const [];
+  String? _syncError;
+
+  Future<AlexWifiPlacesSync> _sync() async =>
+      AlexWifiPlacesSync(AlexPlacesRemoteSource(
+        await ref.read(dioClientProvider.future),
+      ));
 
   @override
   void initState() {
@@ -30,14 +39,48 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
     setState(() => _loading = true);
     final bool enabled = await AlexWifiPlaces.enabled();
     final CurrentWifi? current = await AlexWifiPlaces.current();
-    final List<WifiPlaceLink> links = await AlexWifiPlaces.links();
+    List<WifiPlaceLink> links = await AlexWifiPlaces.links();
+    String? syncError;
+
+    try {
+      links = await (await _sync()).refresh();
+    } catch (error) {
+      syncError = '$error';
+    }
+
     if (!mounted) return;
     setState(() {
       _enabled = enabled;
       _current = current;
       _links = links;
+      _syncError = syncError;
       _loading = false;
     });
+  }
+
+  /// Runs a change against Dawarich, showing progress and any error.
+  Future<bool> _change(
+    Future<List<WifiPlaceLink>> Function(AlexWifiPlacesSync sync) action,
+  ) async {
+    setState(() => _busy = true);
+    try {
+      final List<WifiPlaceLink> links = await action(await _sync());
+      if (!mounted) return true;
+      setState(() {
+        _links = links;
+        _syncError = null;
+      });
+      return true;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Couldn\'t update Dawarich: $error')),
+        );
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   WifiPlaceLink? get _currentLink {
@@ -68,17 +111,8 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
     );
     if (place == null) return;
 
-    await AlexWifiPlaces.addLink(WifiPlaceLink(
-      bssid: current.bssid,
-      ssid: current.ssid,
-      placeId: place.id,
-      placeName: place.name,
-      latitude: place.latitude,
-      longitude: place.longitude,
-    ));
-    await _refresh();
-
-    if (!mounted) return;
+    final bool ok = await _change((sync) => sync.link(current, place));
+    if (!ok || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Linked ${_wifiLabel(current.ssid)} to ${place.name}')),
     );
@@ -107,8 +141,7 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
     );
     if (confirmed != true) return;
 
-    await AlexWifiPlaces.removeLink(link.bssid);
-    await _refresh();
+    await _change((sync) => sync.unlink(link));
   }
 
   static String _wifiLabel(String ssid) => ssid.isEmpty ? 'This Wi-Fi' : ssid;
@@ -124,10 +157,16 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
         actions: [
           IconButton(
             tooltip: 'Refresh',
-            onPressed: _loading ? null : _refresh,
+            onPressed: _loading || _busy ? null : _refresh,
             icon: const Icon(Icons.refresh),
           ),
         ],
+        bottom: _busy
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(4),
+                child: LinearProgressIndicator(),
+              )
+            : null,
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -145,6 +184,19 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                     value: _enabled,
                     onChanged: _setEnabled,
                   ),
+                  if (_syncError != null)
+                    ListTile(
+                      leading: Icon(
+                        Icons.cloud_off,
+                        color: theme.colorScheme.error,
+                      ),
+                      title: const Text('Couldn\'t reach Dawarich'),
+                      subtitle: Text(
+                        'Showing the copy saved on this phone. $_syncError',
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   const Divider(),
                   _SectionHeader('Current Wi-Fi'),
                   if (_current == null)
@@ -170,7 +222,7 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: FilledButton.icon(
-                        onPressed: _linkCurrent,
+                        onPressed: _busy ? null : _linkCurrent,
                         icon: const Icon(Icons.add_location_alt_outlined),
                         label: Text(currentLink == null
                             ? 'Link to a Dawarich place'
@@ -180,8 +232,10 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                       child: Text(
-                        'Only link fixed routers. A phone hotspot or travel '
-                        'router moves with you and would pin you to the place.',
+                        'Links are saved in the place\'s note in Dawarich, as '
+                        'a "wifi: <BSSID> <name>" line. Only link fixed routers: '
+                        'a phone hotspot or travel router moves with you and '
+                        'would pin you to the place.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -205,7 +259,7 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                         trailing: IconButton(
                           tooltip: 'Remove',
                           icon: const Icon(Icons.delete_outline),
-                          onPressed: () => _remove(link),
+                          onPressed: _busy ? null : () => _remove(link),
                         ),
                       ),
                     ),

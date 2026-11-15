@@ -52,12 +52,57 @@ final class CurrentWifi {
   const CurrentWifi({required this.ssid, required this.bssid});
 }
 
+/// alex-hack: Wi-Fi links stored in a Dawarich place's note, one per line:
+///
+///     wifi: aa:bb:cc:dd:ee:ff Network name
+///
+/// The rest of the note is left alone, and lines can be added or removed by
+/// hand in Dawarich too.
+final class WifiPlaceNote {
+  const WifiPlaceNote._();
+
+  static final RegExp _line = RegExp(
+    r'^\s*wifi:\s*([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})(?![0-9a-fA-F:])[ \t]*(.*?)\s*$',
+  );
+
+  /// The (BSSID, network name) pairs in [note], BSSIDs lower-cased.
+  static List<({String bssid, String ssid})> parse(String note) => [
+        for (final String line in note.split('\n'))
+          if (_line.firstMatch(line) case final RegExpMatch m)
+            (bssid: m.group(1)!.toLowerCase(), ssid: m.group(2) ?? ''),
+      ];
+
+  static bool _isLineFor(String line, String bssid) =>
+      _line.firstMatch(line)?.group(1)?.toLowerCase() ==
+      AlexWifiPlaces.normaliseBssid(bssid);
+
+  /// [note] without any line for [bssid].
+  static String remove(String note, String bssid) {
+    final List<String> lines =
+        note.split('\n').where((line) => !_isLineFor(line, bssid)).toList();
+    while (lines.isNotEmpty && lines.last.trim().isEmpty) {
+      lines.removeLast();
+    }
+    return lines.join('\n');
+  }
+
+  /// [note] with one line for [bssid] (replacing any earlier one).
+  static String add(String note, String bssid, String ssid) {
+    final String base = remove(note, bssid);
+    final String line =
+        'wifi: ${AlexWifiPlaces.normaliseBssid(bssid)} ${ssid.trim()}'.trimRight();
+    return base.isEmpty ? line : '$base\n$line';
+  }
+}
+
 /// alex-hack: Wi-Fi places. While the phone is connected to an access point
 /// linked to a place, GPS is paused and points are recorded at the place.
 ///
 /// Matching is by BSSID (the access point's hardware address), not network
-/// name, because the same name is used in several places. Everything lives in
-/// shared preferences (no database changes), via [SharedPreferencesAsync]
+/// name, because the same name is used in several places. The links
+/// themselves live in Dawarich place notes ([WifiPlaceNote]); this keeps a
+/// copy on the phone so the background tracker can match without network.
+/// Shared preferences (no database changes), via [SharedPreferencesAsync]
 /// because the UI and the background tracking isolate both read and write it.
 final class AlexWifiPlaces {
   const AlexWifiPlaces._();
@@ -91,37 +136,12 @@ final class AlexWifiPlaces {
     }
   }
 
-  static Future<void> _saveLinks(List<WifiPlaceLink> links) =>
+  /// Replaces the phone's copy of the links (read from Dawarich).
+  static Future<void> replaceLinks(List<WifiPlaceLink> links) =>
       SharedPreferencesAsync().setString(
         _linksKey,
         jsonEncode(links.map((l) => l.toJson()).toList()),
       );
-
-  /// Links [link]'s access point to its place, replacing any earlier link for
-  /// the same access point.
-  static Future<void> addLink(WifiPlaceLink link) async {
-    final String bssid = normaliseBssid(link.bssid);
-    final List<WifiPlaceLink> current = await links();
-    await _saveLinks([
-      ...current.where((l) => normaliseBssid(l.bssid) != bssid),
-      WifiPlaceLink(
-        bssid: bssid,
-        ssid: link.ssid,
-        placeId: link.placeId,
-        placeName: link.placeName,
-        latitude: link.latitude,
-        longitude: link.longitude,
-      ),
-    ]);
-  }
-
-  static Future<void> removeLink(String bssid) async {
-    final String normalised = normaliseBssid(bssid);
-    final List<WifiPlaceLink> current = await links();
-    await _saveLinks(
-      current.where((l) => normaliseBssid(l.bssid) != normalised).toList(),
-    );
-  }
 
   static Future<WifiPlaceLink?> linkFor(String bssid) async {
     final String normalised = normaliseBssid(bssid);

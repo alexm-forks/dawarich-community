@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:dawarich/features/tracking/presentation/views/wifi_places_view.dart';
+import 'package:dawarich/core/di/providers/core_providers.dart';
+import 'package:dawarich/features/tracking/data/alex_wifi_places_sync.dart';
+import 'package:dawarich/features/tracking/data/sources/alex_places_remote_source.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:dawarich/core/di/providers/viewmodel_providers.dart';
 import 'package:dawarich/core/routing/app_router.dart';
@@ -756,9 +759,31 @@ class _AutoModePage extends StatelessWidget {
   }
 }
 
-/// alex-hack: entry to the Wi-Fi Places screen.
-class _WifiPlacesPage extends StatelessWidget {
+/// alex-hack: entry to the Wi-Fi Places screen. Opening the tracker page also
+/// refreshes the phone's copy of the Wi-Fi links from Dawarich, so links
+/// edited there are picked up.
+class _WifiPlacesPage extends ConsumerStatefulWidget {
   const _WifiPlacesPage();
+
+  @override
+  ConsumerState<_WifiPlacesPage> createState() => _WifiPlacesPageState();
+}
+
+class _WifiPlacesPageState extends ConsumerState<_WifiPlacesPage> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshFromDawarich());
+  }
+
+  Future<void> _refreshFromDawarich() async {
+    try {
+      final client = await ref.read(dioClientProvider.future);
+      await AlexWifiPlacesSync(AlexPlacesRemoteSource(client)).refresh();
+    } catch (error) {
+      debugPrint('[WifiPlaces] Refresh from Dawarich failed: $error');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -32,10 +32,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Flutter (from .flutter-version)
+      # subosito's flutter-version-file only understands pubspec-style YAML; a plain
+      # "3.41.1" in .flutter-version is ignored and it silently installs latest stable.
+      - name: Read Flutter version
+        id: flutter
+        run: echo "version=$(tr -d '[:space:]' < .flutter-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version-file: .flutter-version
+          flutter-version: ${{ steps.flutter.outputs.version }}
           channel: stable
           cache: true
 
@@ -112,7 +118,9 @@ jobs:
           } > android/keystore.properties
 
       - name: Flutter pub get
-        run: flutter pub get
+        run: |
+          flutter --version
+          flutter pub get --enforce-lockfile
 
       - name: Run build_runner
         run: dart run build_runner build --delete-conflicting-outputs

@@ -1,6 +1,5 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:dawarich/core/theme/app_gradients.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:tracelet_doctor/tracelet_doctor.dart';
@@ -116,7 +115,9 @@ class _AboutViewState extends State<AboutView> {
 
                   const SizedBox(height: 32),
 
-                  if (kDebugMode) ...[
+                  // alex-hack: upstream shows this only in debug builds; our
+                  // release builds need it to diagnose tracking.
+                  ...[
                     _InfoCard(
                       icon: Icons.bug_report_outlined,
                       title: 'Developer Tools',

@@ -29,10 +29,15 @@ final class CreatePointUseCase {
   );
 
   /// Creates a full point using a position object.
+  ///
+  /// alex-hack: [skipValidation] is for points recorded at a known place
+  /// (Wi-Fi places), which repeat the same coordinates on purpose and would
+  /// otherwise fail the minimum-distance check.
   Future<Result<LocalPoint, String>> call({
     required LocationFix position,
     required DateTime timestamp,
-    required int userId}) async {
+    required int userId,
+    bool skipValidation = false}) async {
 
     final PointContext context = await _getPointContext(userId);
 
@@ -42,6 +47,10 @@ final class CreatePointUseCase {
       userId,
       timestamp,
     );
+
+    if (skipValidation) {
+      return Ok(point);
+    }
 
     final Option<LastPoint> lastPoint =
         await _localPointRepository.getLastPoint(userId);

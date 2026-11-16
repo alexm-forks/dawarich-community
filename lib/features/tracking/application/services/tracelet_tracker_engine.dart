@@ -37,11 +37,13 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   static const double _chargingMaxDistanceFilterMeters = 5.0;
 
   // alex-hack: while connected to a Wi-Fi place, don't power GPS: ask for a
-  // network (Wi-Fi/cell) fix every 5 minutes instead. Not passive: with
+  // network (Wi-Fi/cell) fix every 15 minutes instead. Not passive: with
   // passive and no other app using GPS the tracker never gets a fix, and
   // Tracelet only fires the heartbeat (where leaving the place is noticed)
-  // once it has one, so the pause could never end.
-  static const int _wifiPlaceIntervalMs = 5 * 60 * 1000;
+  // once it has one, so the pause could never end. One fix after each
+  // tracker restart is enough (the heartbeat reuses it however old), so the
+  // interval can be long; the first fix arrives when the request starts.
+  static const int _wifiPlaceIntervalMs = 15 * 60 * 1000;
 
   static TrackerSettings? _lastAppliedSettings;
   static bool _chargingBoostApplied = false;

@@ -36,8 +36,12 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   static const int _chargingFastestIntervalMs = 1000;
   static const double _chargingMaxDistanceFilterMeters = 5.0;
 
-  // alex-hack: while connected to a Wi-Fi place, never power GPS.
-  static const int _wifiPlaceIntervalMs = 15 * 60 * 1000;
+  // alex-hack: while connected to a Wi-Fi place, don't power GPS: ask for a
+  // network (Wi-Fi/cell) fix every 5 minutes instead. Not passive: with
+  // passive and no other app using GPS the tracker never gets a fix, and
+  // Tracelet only fires the heartbeat (where leaving the place is noticed)
+  // once it has one, so the pause could never end.
+  static const int _wifiPlaceIntervalMs = 5 * 60 * 1000;
 
   static TrackerSettings? _lastAppliedSettings;
   static bool _chargingBoostApplied = false;
@@ -400,7 +404,7 @@ final class TraceletTrackerEngine implements ITrackerEngine {
 
     final tl.GeoConfig geoConfig = tl.GeoConfig(
       desiredAccuracy: wifiPaused
-          ? tl.DesiredAccuracy.passive
+          ? tl.DesiredAccuracy.medium
           : boost
               ? tl.DesiredAccuracy.high
               : _mapDesiredAccuracy(settings.locationPrecision),
@@ -419,7 +423,7 @@ final class TraceletTrackerEngine implements ITrackerEngine {
           ? _wifiPlaceIntervalMs ~/ 1000
           : _resolvePeriodicLocationInterval(settings),
       periodicDesiredAccuracy: wifiPaused
-          ? tl.DesiredAccuracy.passive
+          ? tl.DesiredAccuracy.medium
           : _mapDesiredAccuracy(settings.locationPrecision),
       enableSparseUpdates: false,
       sparseDistanceThreshold: 50.0,

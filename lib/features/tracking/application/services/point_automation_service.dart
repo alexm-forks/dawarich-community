@@ -119,6 +119,10 @@ final class PointAutomationService {
         await _trackerEngine.startTracking(settings);
       }
 
+      // alex-hack: opening the app always re-checks the Wi-Fi place, so a
+      // pause can't outlive the Wi-Fi even if heartbeats stopped.
+      unawaited(checkWifiPlaceNow(userId));
+
       await _refreshNotification(userId);
 
       return const Ok(());
@@ -455,6 +459,15 @@ final class PointAutomationService {
 
     await _refreshNotification(userId);
   }
+
+  /// alex-hack: runs the Wi-Fi place check now rather than at the next
+  /// heartbeat (app opened, Wi-Fi Places switch or links changed). Does
+  /// nothing while tracking is off.
+  Future<void> checkWifiPlaceNow(int userId) => _enqueueTrackingTask(() async {
+        final TrackerSettings settings = await _getTrackerSettings(userId);
+        if (!settings.automaticTracking) return;
+        await _checkWifiPlace(userId);
+      });
 
   /// alex-hack: pauses GPS while connected to a Wi-Fi access point linked to a
   /// Dawarich place, and records points at the place instead: one on arrival,

@@ -1,4 +1,6 @@
 import 'package:dawarich/core/di/providers/core_providers.dart';
+import 'package:dawarich/core/di/providers/session_providers.dart';
+import 'package:dawarich/core/di/providers/usecase_providers.dart';
 import 'package:dawarich/features/tracking/data/alex_wifi_places_sync.dart';
 import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dart';
 import 'package:dawarich/features/tracking/data/sources/alex_places_remote_source.dart';
@@ -65,6 +67,7 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
     setState(() => _busy = true);
     try {
       final List<WifiPlaceLink> links = await action(await _sync());
+      await _applyToTracker();
       if (!mounted) return true;
       setState(() {
         _links = links;
@@ -97,6 +100,20 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
   Future<void> _setEnabled(bool value) async {
     setState(() => _enabled = value);
     await AlexWifiPlaces.setEnabled(value);
+    await _applyToTracker();
+  }
+
+  /// Applies a change to a running tracker straight away instead of at the
+  /// next heartbeat (e.g. ends a pause when the switch is turned off).
+  Future<void> _applyToTracker() async {
+    try {
+      final user = ref.read(authenticatedUserProvider);
+      if (user == null) return;
+      final service = await ref.read(pointAutomationServiceProvider.future);
+      await service.checkWifiPlaceNow(user.id);
+    } catch (error) {
+      debugPrint('[WifiPlaces] Applying to tracker failed: $error');
+    }
   }
 
   Future<void> _linkCurrent() async {

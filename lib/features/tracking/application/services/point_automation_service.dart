@@ -28,6 +28,11 @@ final class PointAutomationService {
   final SaveTrackerSettingsUseCase _saveTrackerSettings;
 
   Future<void> _trackingProcessingChain = Future.value();
+
+  // alex-hack: uploads run beside the processing chain, one at a time, so a
+  // slow or failing upload (bad signal on a train) never holds up storing
+  // new fixes.
+  bool _uploadInFlight = false;
   Future<void>? _headlessRuntimeReadyFuture;
 
   PointAutomationService(
@@ -420,7 +425,7 @@ final class PointAutomationService {
           final TrackerSettings settings = await _getTrackerSettings(userId);
 
           if (batchCount >= settings.pointsPerBatch) {
-            await _uploadCurrentBatch(userId);
+            _startUploadIfIdle(userId);
           }
 
           await _refreshNotification(userId);
@@ -502,10 +507,12 @@ final class PointAutomationService {
 
     if (activeBssid != null) {
       // Left the place (or the link was deleted, or the feature turned off).
+      // Un-pause first, so a failure recording the departure point can't
+      // leave tracking paused.
+      await AlexWifiPlaces.setActiveBssid(null);
       if (activeLink != null) {
         await _recordWifiPlacePoint(userId, activeLink, now);
       }
-      await AlexWifiPlaces.setActiveBssid(null);
       if (kDebugMode) {
         debugPrint('[PointAutomation] Left Wi-Fi place; resuming GPS.');
       }
@@ -583,6 +590,16 @@ final class PointAutomationService {
   }
 
   // ── Upload helper ──────────────────────────────────────────────────────
+
+  /// alex-hack: starts an upload unless one is already running, without
+  /// waiting for it.
+  void _startUploadIfIdle(int userId) {
+    if (_uploadInFlight) return;
+    _uploadInFlight = true;
+    unawaited(
+      _uploadCurrentBatch(userId).whenComplete(() => _uploadInFlight = false),
+    );
+  }
 
   /// Fetches the current un-uploaded batch and uploads it.
   Future<void> _uploadCurrentBatch(int userId) async {

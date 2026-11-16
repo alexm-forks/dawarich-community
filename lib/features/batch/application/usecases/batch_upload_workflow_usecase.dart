@@ -11,6 +11,10 @@ import 'package:option_result/result.dart';
 
 final class BatchUploadWorkflowUseCase {
 
+  /// alex-hack: stop retrying points one by one after this many failures in
+  /// a row.
+  static const int maxConsecutiveRetryFailures = 3;
+
   final IApiPointRepository _api;
   final IPointLocalRepository _localPointRepository;
 
@@ -66,8 +70,18 @@ final class BatchUploadWorkflowUseCase {
 
       int failedCount = 0;
       int uploadedCount = 0;
+      int consecutiveFailures = 0;
 
       for (final LocalPoint point in failedChunks) {
+        // alex-hack: retrying one point at a time is for finding the odd point
+        // the server rejects. When several fail in a row the server or the
+        // network is the problem, and retrying every point (up to 20 s each)
+        // only delays the next attempt; leave the rest for later.
+        if (consecutiveFailures >= maxConsecutiveRetryFailures) {
+          failedCount += failedChunks.length - uploadedCount - failedCount;
+          break;
+        }
+
         final dto = DawarichPointBatch(points: [point.toApi()]).toDto();
         final result = await _api.uploadBatch(dto);
 
@@ -75,12 +89,15 @@ final class BatchUploadWorkflowUseCase {
           if (error.contains("already exists")) {
             await _markAsUploaded([point.id], userId);
             uploadedCount++;
+            consecutiveFailures = 0;
             onChunkUploaded?.call(uploadedCount, failedChunks.length);
             continue;
           }
 
           failedCount++;
+          consecutiveFailures++;
         } else {
+          consecutiveFailures = 0;
           await _markAsUploaded([point.id], userId);
           uploadedCount++;
           onChunkUploaded?.call(uploadedCount, failedChunks.length);

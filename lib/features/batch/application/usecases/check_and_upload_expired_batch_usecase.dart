@@ -3,6 +3,7 @@ import 'package:dawarich/core/data/repositories/local_point_repository_interface
 import 'package:dawarich/features/batch/application/usecases/batch_upload_workflow_usecase.dart';
 import 'package:dawarich/features/batch/application/usecases/get_current_batch_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/settings/get_tracker_settings_usecase.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:option_result/result.dart';
 
 final class CheckAndUploadExpiredBatchUseCase {
@@ -20,6 +21,11 @@ final class CheckAndUploadExpiredBatchUseCase {
 
   Future<Result<bool, String>> call(int userId) async {
     try {
+      // alex-hack: no automatic uploads in battery saver.
+      if (await AlexTrackingPreferences.batterySaverPausesGps()) {
+        return const Ok(false);
+      }
+
       final settings = await _getTrackerSettings(userId);
 
       if (!settings.isBatchExpirationEnabled ||

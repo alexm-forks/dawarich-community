@@ -2,6 +2,7 @@ import 'package:dawarich/core/di/providers/core_providers.dart';
 import 'package:dawarich/core/di/providers/session_providers.dart';
 import 'package:dawarich/core/di/providers/usecase_providers.dart';
 import 'package:dawarich/core/domain/models/user.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,6 +17,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// there is actually work to do.
 final class BatchUploadBootstrap {
   static Future<void> runInBackground() async {
+    // alex-hack: no automatic uploads in battery saver; points wait on the
+    // phone until it's off.
+    if (await AlexTrackingPreferences.batterySaverPausesGps()) {
+      if (kDebugMode) {
+        debugPrint('[BatchUpload] Skipping: battery saver');
+      }
+      return;
+    }
+
     final container = ProviderContainer();
     try {
       final cfg = await container.read(apiConfigManagerProvider.future);

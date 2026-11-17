@@ -34,6 +34,10 @@ final class PointAutomationService {
   // slow or failing upload (bad signal on a train) never holds up storing
   // new fixes.
   bool _uploadInFlight = false;
+
+  /// alex-hack: in battery saver, fixes less accurate than this (our own
+  /// network fixes) are dropped; GPS fixes from other apps are kept.
+  static const double batterySaverMaxAccuracyMeters = 30;
   Future<void>? _headlessRuntimeReadyFuture;
 
   PointAutomationService(
@@ -402,13 +406,22 @@ final class PointAutomationService {
   }) async {
 
     // alex-hack: at a Wi-Fi place the place's own points stand in for GPS, so
-    // stray fixes (other apps' GPS, indoor drift) are dropped; in battery
-    // saver only Wi-Fi place points are kept.
-    if (!skipValidation &&
-        (await AlexWifiPlaces.isPaused() ||
-            await AlexTrackingPreferences.batterySaverPausesGps())) {
+    // stray fixes (other apps' GPS, indoor drift) are dropped.
+    if (!skipValidation && await AlexWifiPlaces.isPaused()) {
       if (kDebugMode) {
-        debugPrint('[PointAutomation] GPS paused; fix dropped.');
+        debugPrint('[PointAutomation] At a Wi-Fi place; fix dropped.');
+      }
+      return;
+    }
+
+    // alex-hack: in battery saver our own fixes are coarse network ones (kept
+    // only to keep the heartbeat alive); keep precise fixes, which come from
+    // other apps using GPS.
+    if (!skipValidation &&
+        locationFix.hAccuracyMeters > batterySaverMaxAccuracyMeters &&
+        await AlexTrackingPreferences.batterySaverPausesGps()) {
+      if (kDebugMode) {
+        debugPrint('[PointAutomation] Battery saver; coarse fix dropped.');
       }
       return;
     }
@@ -465,6 +478,16 @@ final class PointAutomationService {
       await _trackerEngine.refreshPowerState();
     } catch (e, s) {
       debugPrint('[PointAutomation] Power state refresh error: $e\n$s');
+    }
+
+    // alex-hack: catch up on an upload postponed by battery saver.
+    try {
+      final TrackerSettings settings = await _getTrackerSettings(userId);
+      if (await _getBatchPointCount(userId) >= settings.pointsPerBatch) {
+        _startUploadIfIdle(userId);
+      }
+    } catch (e, s) {
+      debugPrint('[PointAutomation] Upload catch-up error: $e\n$s');
     }
 
     await _refreshNotification(userId);
@@ -592,7 +615,7 @@ final class PointAutomationService {
       if (place != null) {
         status = ' • At ${place.placeName}';
       } else if (await AlexTrackingPreferences.batterySaverPausesGps()) {
-        status = ' • Battery saver: GPS off';
+        status = ' • Battery saver: no GPS, no uploads';
       }
 
       final String body =
@@ -629,6 +652,15 @@ final class PointAutomationService {
   /// Fetches the current un-uploaded batch and uploads it.
   Future<void> _uploadCurrentBatch(int userId) async {
     try {
+      // alex-hack: no automatic uploads in battery saver; points wait on the
+      // phone until it's off.
+      if (await AlexTrackingPreferences.batterySaverPausesGps()) {
+        if (kDebugMode) {
+          debugPrint('[PointAutomation] Battery saver; upload postponed.');
+        }
+        return;
+      }
+
       final batch = await _getCurrentBatch(userId);
       if (batch.isEmpty) return;
 

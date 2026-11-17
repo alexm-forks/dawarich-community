@@ -8,6 +8,7 @@ import 'package:dawarich/features/tracking/application/usecases/point_creation/c
 import 'package:dawarich/features/tracking/application/usecases/point_creation/store_point_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/settings/get_tracker_settings_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/settings/save_tracker_settings_usecase.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:dawarich/features/tracking/domain/models/tracker_settings.dart';
@@ -401,10 +402,13 @@ final class PointAutomationService {
   }) async {
 
     // alex-hack: at a Wi-Fi place the place's own points stand in for GPS, so
-    // stray fixes (other apps' GPS, indoor drift) are dropped.
-    if (!skipValidation && await AlexWifiPlaces.isPaused()) {
+    // stray fixes (other apps' GPS, indoor drift) are dropped; in battery
+    // saver only Wi-Fi place points are kept.
+    if (!skipValidation &&
+        (await AlexWifiPlaces.isPaused() ||
+            await AlexTrackingPreferences.batterySaverPausesGps())) {
       if (kDebugMode) {
-        debugPrint('[PointAutomation] At a Wi-Fi place; fix dropped.');
+        debugPrint('[PointAutomation] GPS paused; fix dropped.');
       }
       return;
     }
@@ -449,7 +453,8 @@ final class PointAutomationService {
     }
 
     // alex-hack: the heartbeat (every 60 s) is where arriving at or leaving
-    // a Wi-Fi place, and plugging in or unplugging, get noticed.
+    // a Wi-Fi place, plugging in or unplugging, and battery saver turning on
+    // or off get noticed.
     try {
       await _checkWifiPlace(userId);
     } catch (e, s) {
@@ -457,9 +462,9 @@ final class PointAutomationService {
     }
 
     try {
-      await _trackerEngine.refreshChargingBoost();
+      await _trackerEngine.refreshPowerState();
     } catch (e, s) {
-      debugPrint('[PointAutomation] Charging boost refresh error: $e\n$s');
+      debugPrint('[PointAutomation] Power state refresh error: $e\n$s');
     }
 
     await _refreshNotification(userId);
@@ -472,6 +477,7 @@ final class PointAutomationService {
         final TrackerSettings settings = await _getTrackerSettings(userId);
         if (!settings.automaticTracking) return;
         await _checkWifiPlace(userId);
+        await _trackerEngine.refreshPowerState();
       });
 
   /// alex-hack: pauses GPS while connected to a Wi-Fi access point linked to a
@@ -577,7 +583,20 @@ final class PointAutomationService {
         None() => '--:--:--',
       };
 
-      final String body = 'Last point: $lastPointTimeStr • $batchCount in batch';
+      // alex-hack: say why GPS is off, so a pause doesn't look like a stall.
+      String status = '';
+      final String? activeBssid = await AlexWifiPlaces.activeBssid();
+      final WifiPlaceLink? place = activeBssid == null || !await AlexWifiPlaces.enabled()
+          ? null
+          : await AlexWifiPlaces.linkFor(activeBssid);
+      if (place != null) {
+        status = ' • At ${place.placeName}';
+      } else if (await AlexTrackingPreferences.batterySaverPausesGps()) {
+        status = ' • Battery saver: GPS off';
+      }
+
+      final String body =
+          'Last point: $lastPointTimeStr • $batchCount in batch$status';
       await _trackerEngine.updateForegroundNotification(
         title: 'Tracking active',
         body: body,

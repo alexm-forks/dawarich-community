@@ -83,7 +83,7 @@ void main() {
     final tl.Config config = engine.buildConfigurationForTest(
       settings(frequency: 0),
       chargingBoost: true,
-      wifiPaused: true,
+      gpsPaused: true,
     );
 
     // Not passive: the tracker must still get fixes, or Tracelet never fires

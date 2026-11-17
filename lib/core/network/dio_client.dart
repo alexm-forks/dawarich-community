@@ -12,6 +12,9 @@ final class DioClient {
       : _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 20),
     receiveTimeout: const Duration(seconds: 20),
+    // alex-hack: without a send timeout an upload over a stalled connection
+    // could hang for as long as TCP takes to give up.
+    sendTimeout: const Duration(seconds: 60),
   )) {
     _dio.interceptors.addAll(interceptors);
     try {

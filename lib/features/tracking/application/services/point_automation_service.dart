@@ -8,6 +8,7 @@ import 'package:dawarich/features/tracking/application/usecases/point_creation/c
 import 'package:dawarich/features/tracking/application/usecases/point_creation/store_point_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/settings/get_tracker_settings_usecase.dart';
 import 'package:dawarich/features/tracking/application/usecases/settings/save_tracker_settings_usecase.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:dawarich/features/tracking/domain/models/tracker_settings.dart';
@@ -33,6 +34,10 @@ final class PointAutomationService {
   // slow or failing upload (bad signal on a train) never holds up storing
   // new fixes.
   bool _uploadInFlight = false;
+
+  /// alex-hack: in battery saver, fixes less accurate than this (our own
+  /// network fixes) are dropped; GPS fixes from other apps are kept.
+  static const double batterySaverMaxAccuracyMeters = 30;
   Future<void>? _headlessRuntimeReadyFuture;
 
   PointAutomationService(
@@ -409,6 +414,18 @@ final class PointAutomationService {
       return;
     }
 
+    // alex-hack: in battery saver our own fixes are coarse network ones (kept
+    // only to keep the heartbeat alive); keep precise fixes, which come from
+    // other apps using GPS.
+    if (!skipValidation &&
+        locationFix.hAccuracyMeters > batterySaverMaxAccuracyMeters &&
+        await AlexTrackingPreferences.batterySaverPausesGps()) {
+      if (kDebugMode) {
+        debugPrint('[PointAutomation] Battery saver; coarse fix dropped.');
+      }
+      return;
+    }
+
     try {
       final pointResult = await _createPoint(
         position: locationFix,
@@ -449,7 +466,8 @@ final class PointAutomationService {
     }
 
     // alex-hack: the heartbeat (every 60 s) is where arriving at or leaving
-    // a Wi-Fi place, and plugging in or unplugging, get noticed.
+    // a Wi-Fi place, plugging in or unplugging, and battery saver turning on
+    // or off get noticed.
     try {
       await _checkWifiPlace(userId);
     } catch (e, s) {
@@ -457,9 +475,19 @@ final class PointAutomationService {
     }
 
     try {
-      await _trackerEngine.refreshChargingBoost();
+      await _trackerEngine.refreshPowerState();
     } catch (e, s) {
-      debugPrint('[PointAutomation] Charging boost refresh error: $e\n$s');
+      debugPrint('[PointAutomation] Power state refresh error: $e\n$s');
+    }
+
+    // alex-hack: catch up on an upload postponed by battery saver.
+    try {
+      final TrackerSettings settings = await _getTrackerSettings(userId);
+      if (await _getBatchPointCount(userId) >= settings.pointsPerBatch) {
+        _startUploadIfIdle(userId);
+      }
+    } catch (e, s) {
+      debugPrint('[PointAutomation] Upload catch-up error: $e\n$s');
     }
 
     await _refreshNotification(userId);
@@ -472,6 +500,7 @@ final class PointAutomationService {
         final TrackerSettings settings = await _getTrackerSettings(userId);
         if (!settings.automaticTracking) return;
         await _checkWifiPlace(userId);
+        await _trackerEngine.refreshPowerState();
       });
 
   /// alex-hack: pauses GPS while connected to a Wi-Fi access point linked to a
@@ -577,7 +606,20 @@ final class PointAutomationService {
         None() => '--:--:--',
       };
 
-      final String body = 'Last point: $lastPointTimeStr • $batchCount in batch';
+      // alex-hack: say why GPS is off, so a pause doesn't look like a stall.
+      String status = '';
+      final String? activeBssid = await AlexWifiPlaces.activeBssid();
+      final WifiPlaceLink? place = activeBssid == null || !await AlexWifiPlaces.enabled()
+          ? null
+          : await AlexWifiPlaces.linkFor(activeBssid);
+      if (place != null) {
+        status = ' • At ${place.placeName}';
+      } else if (await AlexTrackingPreferences.batterySaverPausesGps()) {
+        status = ' • Battery saver: no GPS, no uploads';
+      }
+
+      final String body =
+          'Last point: $lastPointTimeStr • $batchCount in batch$status';
       await _trackerEngine.updateForegroundNotification(
         title: 'Tracking active',
         body: body,
@@ -610,6 +652,15 @@ final class PointAutomationService {
   /// Fetches the current un-uploaded batch and uploads it.
   Future<void> _uploadCurrentBatch(int userId) async {
     try {
+      // alex-hack: no automatic uploads in battery saver; points wait on the
+      // phone until it's off.
+      if (await AlexTrackingPreferences.batterySaverPausesGps()) {
+        if (kDebugMode) {
+          debugPrint('[PointAutomation] Battery saver; upload postponed.');
+        }
+        return;
+      }
+
       final batch = await _getCurrentBatch(userId);
       if (batch.isEmpty) return;
 

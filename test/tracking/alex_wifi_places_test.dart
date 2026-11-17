@@ -3,6 +3,7 @@
 
 import 'package:dawarich/core/network/dio_client.dart';
 import 'package:dawarich/features/tracking/data/alex_wifi_places_sync.dart';
+import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
 import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dart';
 import 'package:dawarich/features/tracking/data/sources/alex_places_remote_source.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -128,6 +129,20 @@ void main() {
       expect(remote.places[1]!.note, '');
       expect(await AlexWifiPlaces.links(), isEmpty);
     });
+  });
+
+  test('battery saver pause setting', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+
+    expect(await AlexTrackingPreferences.batterySaverPause(), isTrue);
+
+    // No battery plugin in tests: reading battery saver fails, which must
+    // count as "not in battery saver" so tracking carries on.
+    expect(await AlexTrackingPreferences.batterySaverPausesGps(), isFalse);
+
+    await AlexTrackingPreferences.setBatterySaverPause(false);
+    expect(await AlexTrackingPreferences.batterySaverPause(), isFalse);
+    expect(await AlexTrackingPreferences.batterySaverPausesGps(), isFalse);
   });
 
   test('pause state', () async {

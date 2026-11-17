@@ -83,7 +83,7 @@ void main() {
     final tl.Config config = engine.buildConfigurationForTest(
       settings(frequency: 0),
       chargingBoost: true,
-      wifiPaused: true,
+      gpsPaused: true,
     );
 
     // Not passive: the tracker must still get fixes, or Tracelet never fires
@@ -93,6 +93,18 @@ void main() {
     expect(config.android.fastestLocationUpdateInterval, 15 * 60 * 1000);
     expect(config.geo.batteryBudgetPerHour, 2.0);
     expect(config.geo.distanceFilter, 10.0);
+  });
+
+  test('battery saver: network fixes, other apps\' fixes at most every 5 min', () {
+    final tl.Config config = engine.buildConfigurationForTest(
+      settings(frequency: 0),
+      gpsPaused: true,
+      takeOtherAppsFixes: true,
+    );
+
+    expect(config.geo.desiredAccuracy, tl.DesiredAccuracy.medium);
+    expect(config.android.locationUpdateInterval, 15 * 60 * 1000);
+    expect(config.android.fastestLocationUpdateInterval, 5 * 60 * 1000);
   });
 
   test('timer mode is unchanged, charging or not', () {

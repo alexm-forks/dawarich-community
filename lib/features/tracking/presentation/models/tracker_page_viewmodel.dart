@@ -207,6 +207,9 @@ final class TrackerPageViewModel extends ChangeNotifier with SafeChangeNotifier 
   bool _chargingBoost = AlexTrackingPreferences.defaultChargingBoost;
   bool get chargingBoost => _chargingBoost;
 
+  bool _batterySaverPause = AlexTrackingPreferences.defaultBatterySaverPause;
+  bool get batterySaverPause => _batterySaverPause;
+
   LocationPrecision _locationAccuracy =
       Platform.isAndroid ? LocationPrecision.high : LocationPrecision.best;
   LocationPrecision get locationAccuracy => _locationAccuracy;
@@ -639,7 +642,15 @@ final class TrackerPageViewModel extends ChangeNotifier with SafeChangeNotifier 
     _movingIntervalSeconds =
         await AlexTrackingPreferences.movingIntervalSeconds();
     _chargingBoost = await AlexTrackingPreferences.chargingBoost();
+    _batterySaverPause = await AlexTrackingPreferences.batterySaverPause();
     safeNotifyListeners();
+  }
+
+  Future<void> setBatterySaverPause(bool enabled) async {
+    _batterySaverPause = enabled;
+    safeNotifyListeners();
+    await AlexTrackingPreferences.setBatterySaverPause(enabled);
+    await _applyToRunningTracker(modeChanged: false);
   }
 
   Future<void> setMovingIntervalSeconds(int seconds) async {

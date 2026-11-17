@@ -1,3 +1,4 @@
+import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,6 +13,7 @@ final class AlexTrackingPreferences {
 
   static const String _movingIntervalKey = 'alex.tracking.moving_interval_seconds';
   static const String _chargingBoostKey = 'alex.tracking.charging_boost';
+  static const String _batterySaverPauseKey = 'alex.tracking.battery_saver_pause';
 
   /// Seconds between fixes while moving in automatic mode.
   static const int defaultMovingIntervalSeconds = 300;
@@ -20,6 +22,8 @@ final class AlexTrackingPreferences {
   static const List<int> movingIntervalChoices = [5, 30, 60, 120, 300, 600];
 
   static const bool defaultChargingBoost = true;
+
+  static const bool defaultBatterySaverPause = true;
 
   static Future<int> movingIntervalSeconds() async {
     try {
@@ -51,4 +55,30 @@ final class AlexTrackingPreferences {
 
   static Future<void> setChargingBoost(bool enabled) =>
       SharedPreferencesAsync().setBool(_chargingBoostKey, enabled);
+
+  /// Whether to turn GPS off while the phone's battery saver is on.
+  static Future<bool> batterySaverPause() async {
+    try {
+      return await SharedPreferencesAsync().getBool(_batterySaverPauseKey) ??
+          defaultBatterySaverPause;
+    } catch (_) {
+      return defaultBatterySaverPause;
+    }
+  }
+
+  static Future<void> setBatterySaverPause(bool enabled) =>
+      SharedPreferencesAsync().setBool(_batterySaverPauseKey, enabled);
+
+  /// Whether battery saver is on and the setting says to turn GPS off for it.
+  static Future<bool> batterySaverPausesGps() async {
+    if (!await batterySaverPause()) return false;
+    try {
+      return await Battery().isInBatterySaveMode;
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[AlexTrackingPreferences] Battery saver state unavailable: $error');
+      }
+      return false;
+    }
+  }
 }

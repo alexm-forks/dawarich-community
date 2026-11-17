@@ -753,6 +753,17 @@ class _AutoModePage extends StatelessWidget {
             value: vm.chargingBoost,
             onChanged: vm.setChargingBoost,
           ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Save battery in battery saver'),
+            subtitle: const Text(
+              'Any frequency. No GPS of our own and no uploads; Wi-Fi place '
+              'points and other apps\' GPS fixes (at most every 5 min) are '
+              'kept and uploaded later',
+            ),
+            value: vm.batterySaverPause,
+            onChanged: vm.setBatterySaverPause,
+          ),
         ],
       ),
     );

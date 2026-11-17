@@ -36,7 +36,8 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   static const int _chargingFastestIntervalMs = 1000;
   static const double _chargingMaxDistanceFilterMeters = 5.0;
 
-  // alex-hack: while connected to a Wi-Fi place, don't power GPS: ask for a
+  // alex-hack: while GPS is paused (at a Wi-Fi place, or in battery saver),
+  // don't power GPS: ask for a
   // network (Wi-Fi/cell) fix every 15 minutes instead. Not passive: with
   // passive and no other app using GPS the tracker never gets a fix, and
   // Tracelet only fires the heartbeat (where leaving the place is noticed)
@@ -47,6 +48,13 @@ final class TraceletTrackerEngine implements ITrackerEngine {
 
   static TrackerSettings? _lastAppliedSettings;
   static bool _chargingBoostApplied = false;
+  static bool _gpsPausedApplied = false;
+
+  // alex-hack: in battery saver, take a fix from another app's GPS at most
+  // every 5 minutes. Each one wakes the app to process and store it, so not
+  // more often, even when e.g. navigation is running.
+  static const int _batterySaverOtherAppsIntervalMs = 5 * 60 * 1000;
+  static bool _takeOtherAppsFixesApplied = false;
 
   static const int _heartbeatIntervalSeconds = 60;
   static const int _automaticStopTimeoutMinutes = 5;
@@ -279,51 +287,74 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   }
 
   @override
-  Future<void> refreshChargingBoost() async {
+  Future<void> refreshPowerState() async {
     final TrackerSettings? settings = _lastAppliedSettings;
 
-    if (settings == null || settings.trackingMode != TrackingMode.automatic) {
+    if (settings == null) {
       return;
     }
 
-    final bool boost = !await AlexWifiPlaces.isPaused() &&
-        await AlexTrackingPreferences.chargingBoost() &&
-        await _isCharging();
+    final state = await _powerState(settings);
 
-    if (boost == _chargingBoostApplied) {
+    if (state.boost == _chargingBoostApplied &&
+        state.gpsPaused == _gpsPausedApplied &&
+        state.takeOtherAppsFixes == _takeOtherAppsFixesApplied) {
       return;
     }
 
     if (kDebugMode) {
-      debugPrint('$debugPrefix Charging boost changed to $boost; re-applying config.');
+      debugPrint(
+        '$debugPrefix Power state changed (boost=${state.boost}, '
+        'gpsPaused=${state.gpsPaused}); re-applying config.',
+      );
     }
 
     await updateConfiguration(settings);
   }
 
-  /// Reads the alex-hack preferences and the charging state right before
+  /// alex-hack: what the phone's state asks of the tracker right now.
+  /// GPS is paused at a Wi-Fi place or in battery saver. In battery saver
+  /// (away from a Wi-Fi place) fixes from other apps' GPS are still taken.
+  /// The charging boost applies in automatic mode when plugged in and GPS
+  /// isn't paused.
+  static Future<({bool gpsPaused, bool takeOtherAppsFixes, bool boost})>
+      _powerState(TrackerSettings settings) async {
+    final bool wifiPaused = await AlexWifiPlaces.isPaused();
+    final bool batterySaver =
+        await AlexTrackingPreferences.batterySaverPausesGps();
+    final bool gpsPaused = wifiPaused || batterySaver;
+    final bool boost = settings.trackingMode == TrackingMode.automatic &&
+        !gpsPaused &&
+        await AlexTrackingPreferences.chargingBoost() &&
+        await _isCharging();
+    return (
+      gpsPaused: gpsPaused,
+      takeOtherAppsFixes: batterySaver && !wifiPaused,
+      boost: boost,
+    );
+  }
+
+  /// Reads the alex-hack preferences and the phone's power state right before
   /// building, so every isolate that applies a configuration applies the same
   /// one.
   Future<tl.Config> _buildConfigurationWithChargingState(
     TrackerSettings settings,
   ) async {
-    final bool isAutoMode = settings.trackingMode == TrackingMode.automatic;
-    final bool wifiPaused = await AlexWifiPlaces.isPaused();
-    final bool boost = isAutoMode &&
-        !wifiPaused &&
-        await AlexTrackingPreferences.chargingBoost() &&
-        await _isCharging();
+    final state = await _powerState(settings);
     final int movingIntervalSeconds =
         await AlexTrackingPreferences.movingIntervalSeconds();
 
     _lastAppliedSettings = settings;
-    _chargingBoostApplied = boost;
+    _chargingBoostApplied = state.boost;
+    _gpsPausedApplied = state.gpsPaused;
+    _takeOtherAppsFixesApplied = state.takeOtherAppsFixes;
 
     return _buildConfiguration(
       settings,
-      chargingBoost: boost,
+      chargingBoost: state.boost,
       movingIntervalSeconds: movingIntervalSeconds,
-      wifiPaused: wifiPaused,
+      gpsPaused: state.gpsPaused,
+      takeOtherAppsFixes: state.takeOtherAppsFixes,
     );
   }
 
@@ -334,13 +365,15 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     bool chargingBoost = false,
     int movingIntervalSeconds =
         AlexTrackingPreferences.defaultMovingIntervalSeconds,
-    bool wifiPaused = false,
+    bool gpsPaused = false,
+    bool takeOtherAppsFixes = false,
   }) =>
       _buildConfiguration(
         settings,
         chargingBoost: chargingBoost,
         movingIntervalSeconds: movingIntervalSeconds,
-        wifiPaused: wifiPaused,
+        gpsPaused: gpsPaused,
+        takeOtherAppsFixes: takeOtherAppsFixes,
       );
 
   static Future<bool> _isCharging() async {
@@ -390,11 +423,12 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     bool chargingBoost = false,
     int movingIntervalSeconds =
         AlexTrackingPreferences.defaultMovingIntervalSeconds,
-    bool wifiPaused = false,
+    bool gpsPaused = false,
+    bool takeOtherAppsFixes = false,
   }) {
 
     final bool isAutoMode = settings.trackingMode == TrackingMode.automatic;
-    final bool boost = isAutoMode && chargingBoost && !wifiPaused;
+    final bool boost = isAutoMode && chargingBoost && !gpsPaused;
 
     final double configuredDistanceFilter = settings
         .effectiveMinimumPointDistanceMeters
@@ -405,7 +439,7 @@ final class TraceletTrackerEngine implements ITrackerEngine {
         : configuredDistanceFilter;
 
     final tl.GeoConfig geoConfig = tl.GeoConfig(
-      desiredAccuracy: wifiPaused
+      desiredAccuracy: gpsPaused
           ? tl.DesiredAccuracy.medium
           : boost
               ? tl.DesiredAccuracy.high
@@ -421,10 +455,10 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       maxMonitoredGeofences: -1,
       enableTimestampMeta: false,
       enableAdaptiveMode: isAutoMode && !boost,
-      periodicLocationInterval: wifiPaused
+      periodicLocationInterval: gpsPaused
           ? _wifiPlaceIntervalMs ~/ 1000
           : _resolvePeriodicLocationInterval(settings),
-      periodicDesiredAccuracy: wifiPaused
+      periodicDesiredAccuracy: gpsPaused
           ? tl.DesiredAccuracy.medium
           : _mapDesiredAccuracy(settings.locationPrecision),
       enableSparseUpdates: false,
@@ -463,15 +497,19 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     );
 
     final tl.AndroidConfig androidConfig = tl.AndroidConfig(
-      locationUpdateInterval: wifiPaused
+      locationUpdateInterval: gpsPaused
           ? _wifiPlaceIntervalMs
           : !isAutoMode
           ? _streamLocationUpdateIntervalMs
           : boost
               ? _chargingIntervalMs
               : movingIntervalSeconds * 1000,
-      fastestLocationUpdateInterval: wifiPaused
-          ? _wifiPlaceIntervalMs
+      // alex-hack: in battery saver, take other apps' GPS fixes at most every
+      // 5 min; at a Wi-Fi place they'd be dropped, so don't wake for them.
+      fastestLocationUpdateInterval: gpsPaused
+          ? (takeOtherAppsFixes
+              ? _batterySaverOtherAppsIntervalMs
+              : _wifiPlaceIntervalMs)
           : !isAutoMode
           ? _fastestStreamLocationUpdateIntervalMs
           : boost

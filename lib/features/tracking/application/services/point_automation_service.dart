@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dawarich/features/batch/application/usecases/batch_upload_workflow_usecase.dart';
 import 'package:dawarich/features/batch/application/usecases/get_current_batch_usecase.dart';
 import 'package:dawarich/features/tracking/application/interfaces/tracker_engine_interface.dart';
@@ -34,6 +35,15 @@ final class PointAutomationService {
   // slow or failing upload (bad signal on a train) never holds up storing
   // new fixes.
   bool _uploadInFlight = false;
+
+  // alex-hack: the Wi-Fi place / power checks can't rely on Tracelet's
+  // heartbeat alone: it only fires once the tracker has a cached fix, and in
+  // timer (periodic) mode the tracker's fixes never fill that cache. So the
+  // checks also run when a fix arrives (at most once a minute) and straight
+  // away when the network connection changes.
+  static const Duration _stateCheckMinInterval = Duration(minutes: 1);
+  DateTime? _lastStateCheck;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   /// alex-hack: in battery saver, fixes less accurate than this (our own
   /// network fixes) are dropped; GPS fixes from other apps are kept.
@@ -360,6 +370,14 @@ final class PointAutomationService {
         );
       },
     );
+
+    // alex-hack: joining or leaving a Wi-Fi network is checked at once.
+    unawaited(_connectivitySub?.cancel());
+    _connectivitySub = Connectivity().onConnectivityChanged.listen(
+      (_) => unawaited(checkWifiPlaceNow(userId)),
+      onError: (Object error) =>
+          debugPrint('[PointAutomation] Connectivity listener error: $error'),
+    );
   }
 
 
@@ -370,6 +388,8 @@ final class PointAutomationService {
 
     _trackerEngine.setLocationFixHandler(null);
     _trackerEngine.setHeartbeatHandler(null);
+    unawaited(_connectivitySub?.cancel());
+    _connectivitySub = null;
   }
 
   Future<void> _enqueueLocationFix({
@@ -404,6 +424,17 @@ final class PointAutomationService {
     required int userId,
     bool skipValidation = false,
   }) async {
+
+    // alex-hack: a delivered fix is also a chance to run the Wi-Fi place and
+    // power checks (before deciding whether to drop it), since the heartbeat
+    // may not be firing.
+    if (!skipValidation) {
+      final DateTime now = DateTime.now();
+      final DateTime? last = _lastStateCheck;
+      if (last == null || now.difference(last) >= _stateCheckMinInterval) {
+        await _runStateChecks(userId);
+      }
+    }
 
     // alex-hack: at a Wi-Fi place the place's own points stand in for GPS, so
     // stray fixes (other apps' GPS, indoor drift) are dropped.
@@ -465,9 +496,17 @@ final class PointAutomationService {
       debugPrint('[PointAutomation] Tracelet heartbeat received.');
     }
 
-    // alex-hack: the heartbeat (every 60 s) is where arriving at or leaving
-    // a Wi-Fi place, plugging in or unplugging, and battery saver turning on
-    // or off get noticed.
+    await _runStateChecks(userId);
+    await _refreshNotification(userId);
+  }
+
+  /// alex-hack: arriving at or leaving a Wi-Fi place, plugging in or
+  /// unplugging, battery saver turning on or off, and an upload postponed by
+  /// battery saver. Run from the heartbeat, from delivered fixes (at most once
+  /// a minute), when the network connection changes and when the app opens.
+  Future<void> _runStateChecks(int userId) async {
+    _lastStateCheck = DateTime.now();
+
     try {
       await _checkWifiPlace(userId);
     } catch (e, s) {
@@ -480,7 +519,6 @@ final class PointAutomationService {
       debugPrint('[PointAutomation] Power state refresh error: $e\n$s');
     }
 
-    // alex-hack: catch up on an upload postponed by battery saver.
     try {
       final TrackerSettings settings = await _getTrackerSettings(userId);
       if (await _getBatchPointCount(userId) >= settings.pointsPerBatch) {
@@ -489,8 +527,6 @@ final class PointAutomationService {
     } catch (e, s) {
       debugPrint('[PointAutomation] Upload catch-up error: $e\n$s');
     }
-
-    await _refreshNotification(userId);
   }
 
   /// alex-hack: runs the Wi-Fi place check now rather than at the next
@@ -499,8 +535,8 @@ final class PointAutomationService {
   Future<void> checkWifiPlaceNow(int userId) => _enqueueTrackingTask(() async {
         final TrackerSettings settings = await _getTrackerSettings(userId);
         if (!settings.automaticTracking) return;
-        await _checkWifiPlace(userId);
-        await _trackerEngine.refreshPowerState();
+        await _runStateChecks(userId);
+        await _refreshNotification(userId);
       });
 
   /// alex-hack: pauses GPS while connected to a Wi-Fi access point linked to a
@@ -534,7 +570,10 @@ final class PointAutomationService {
       }
       final DateTime? last = await AlexWifiPlaces.lastPresencePointAt();
       if (last == null ||
-          now.difference(last.toUtc()) >= AlexWifiPlaces.presenceInterval) {
+          // A minute's slack: checks driven by 15-minute fixes land just
+          // under 15 minutes apart, which would skip every other point.
+          now.difference(last.toUtc()) >=
+              AlexWifiPlaces.presenceInterval - const Duration(minutes: 1)) {
         await _recordWifiPlacePoint(userId, currentLink, now);
       }
       return;
@@ -572,8 +611,18 @@ final class PointAutomationService {
   Future<void> _recordWifiPlacePoint(
     int userId,
     WifiPlaceLink link,
-    DateTime timestampUtc,
+    DateTime time,
   ) async {
+    // Whole minutes: Tracelet delivers events to every running Flutter engine,
+    // so more than one may record the same place point. With the same
+    // timestamp and coordinates the database's duplicate key keeps only one.
+    final DateTime timestampUtc = DateTime.utc(
+      time.toUtc().year,
+      time.toUtc().month,
+      time.toUtc().day,
+      time.toUtc().hour,
+      time.toUtc().minute,
+    );
     await _handleLocationFix(
       userId: userId,
       skipValidation: true,

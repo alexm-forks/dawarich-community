@@ -49,6 +49,8 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   static TrackerSettings? _lastAppliedSettings;
   static bool _chargingBoostApplied = false;
   static bool _gpsPausedApplied = false;
+  static String? _lastNotificationTitle;
+  static String? _lastNotificationBody;
 
   // alex-hack: in battery saver, take a fix from another app's GPS at most
   // every 5 minutes. Each one wakes the app to process and store it, so not
@@ -402,6 +404,10 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     String? body,
   }) async {
 
+    // alex-hack: remember the text so a later full configuration keeps it.
+    if (title != null) _lastNotificationTitle = title;
+    if (body != null) _lastNotificationBody = body;
+
     if (title != null || body != null) {
       final tl.Config config = tl.Config(
         android: tl.AndroidConfig(
@@ -484,8 +490,13 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       enabled: true,
       channelId: NotificationConstants.channelId,
       channelName: NotificationConstants.channelName,
-      notificationTitle: NotificationConstants.notificationTitle,
-      notificationText: NotificationConstants.notificationContent,
+      // alex-hack: keep the last status text rather than putting the
+      // "Starting background tracking..." placeholder back on every
+      // configuration change (Wi-Fi place, charging, battery saver...).
+      notificationTitle:
+          _lastNotificationTitle ?? NotificationConstants.notificationTitle,
+      notificationText:
+          _lastNotificationBody ?? NotificationConstants.notificationContent,
       notificationColor: null,
       notificationSmallIcon: NotificationConstants.notificationIcon,
       notificationLargeIcon: NotificationConstants.notificationIcon,

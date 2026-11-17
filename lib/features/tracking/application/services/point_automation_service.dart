@@ -497,7 +497,6 @@ final class PointAutomationService {
     }
 
     await _runStateChecks(userId);
-    await _refreshNotification(userId);
   }
 
   /// alex-hack: arriving at or leaving a Wi-Fi place, plugging in or
@@ -527,6 +526,11 @@ final class PointAutomationService {
     } catch (e, s) {
       debugPrint('[PointAutomation] Upload catch-up error: $e\n$s');
     }
+
+    // Any of the above may have re-applied the tracker configuration; make
+    // sure the notification shows the current status, including while fixes
+    // are being dropped at a Wi-Fi place.
+    await _refreshNotification(userId);
   }
 
   /// alex-hack: runs the Wi-Fi place check now rather than at the next
@@ -536,7 +540,6 @@ final class PointAutomationService {
         final TrackerSettings settings = await _getTrackerSettings(userId);
         if (!settings.automaticTracking) return;
         await _runStateChecks(userId);
-        await _refreshNotification(userId);
       });
 
   /// alex-hack: pauses GPS while connected to a Wi-Fi access point linked to a

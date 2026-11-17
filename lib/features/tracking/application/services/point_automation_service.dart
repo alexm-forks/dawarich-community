@@ -493,10 +493,16 @@ final class PointAutomationService {
 
     final DateTime now = DateTime.now().toUtc();
 
+    // Still at the same place, possibly on another of its access points
+    // (mesh Wi-Fi, or the 2.4/5 GHz radios of one router, have different
+    // BSSIDs): carry on rather than leaving and arriving again.
     if (currentLink != null &&
         activeLink != null &&
-        AlexWifiPlaces.normaliseBssid(currentLink.bssid) ==
-            AlexWifiPlaces.normaliseBssid(activeLink.bssid)) {
+        currentLink.placeId == activeLink.placeId) {
+      if (AlexWifiPlaces.normaliseBssid(currentLink.bssid) !=
+          AlexWifiPlaces.normaliseBssid(activeLink.bssid)) {
+        await AlexWifiPlaces.setActiveBssid(currentLink.bssid);
+      }
       final DateTime? last = await AlexWifiPlaces.lastPresencePointAt();
       if (last == null ||
           now.difference(last.toUtc()) >= AlexWifiPlaces.presenceInterval) {

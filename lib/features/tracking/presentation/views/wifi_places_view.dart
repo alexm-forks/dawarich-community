@@ -250,9 +250,11 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                       child: Text(
                         'Links are saved in the place\'s note in Dawarich, as '
-                        'a "wifi: <BSSID> <name>" line. Only link fixed routers: '
-                        'a phone hotspot or travel router moves with you and '
-                        'would pin you to the place.',
+                        'a "wifi: <BSSID> <name>" line. Mesh Wi-Fi or several '
+                        'access points: link each one to the same place (connect '
+                        'near it), or add their lines to the note in Dawarich. '
+                        'Only link fixed routers: a phone hotspot or travel '
+                        'router moves with you and would pin you to the place.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),

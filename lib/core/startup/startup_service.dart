@@ -8,6 +8,7 @@ import 'package:dawarich/core/shell/life_cycle/life_cycle_controller.dart';
 import 'package:dawarich/core/di/providers/settings_providers.dart';
 import 'package:dawarich/features/biometric_lock/domain/app_lock_timestamp_tracker.dart';
 import 'package:dawarich/features/onboarding/application/usecases/check_onboarding_permissions_usecase.dart';
+import 'package:dawarich/features/tracking/application/services/alex_tracking_health.dart';
 import 'package:dawarich/main.dart';
 import 'package:dawarich_android_user_module/dawarich_android_user_module.dart';
 import 'package:flutter/foundation.dart';
@@ -44,6 +45,11 @@ final class StartupService {
         if (resumeResult case Err(value: final message)) {
           debugPrint('[StartupService] $message');
         }
+
+        // alex-hack: opening the app re-creates the tracking service from the
+        // foreground, which restores location, so the "tap to resume"
+        // warning can go. The next health check brings it back if not.
+        await AlexTrackingHealth.clear();
       } catch (error, stackTrace) {
         // Tracking restoration must not prevent the application from opening.
         debugPrint(
@@ -84,6 +90,9 @@ final class StartupService {
       // Register periodic batch upload worker (handles both threshold
       // and expiration uploads when the foreground service isn't running).
       await registerBatchUploadWorker();
+
+      // alex-hack: warn when Android leaves tracking without location.
+      await registerTrackingHealthWorker();
 
       if (kDebugMode) {
         debugPrint('[StartupService] Navigating to timeline screen...');

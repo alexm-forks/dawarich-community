@@ -1,10 +1,13 @@
 import 'package:dawarich/features/batch/data/background/batch_upload_bootstrap.dart';
 import 'package:dawarich/features/stats/data/background/stats_background_refresh_bootstrap.dart';
+import 'package:dawarich/features/tracking/application/services/alex_tracking_health.dart';
 import 'package:flutter/foundation.dart';
 import 'package:workmanager/workmanager.dart';
 
 const String kStatsRefreshTask = 'stats_refresh_daily';
 const String kBatchUploadTask = 'batch_upload_check';
+// alex-hack: "tracking has no location access" check.
+const String kTrackingHealthTask = 'alex_tracking_health_check';
 
 bool _workmanagerInitialized = false;
 
@@ -15,6 +18,8 @@ void workmanagerCallbackDispatcher() {
       await StatsBackgroundRefreshBootstrap.runInBackground(forceRefresh: true);
     } else if (task == kBatchUploadTask) {
       await BatchUploadBootstrap.runInBackground();
+    } else if (task == kTrackingHealthTask) {
+      await AlexTrackingHealth.checkAndNotify();
     }
     return true;
   });
@@ -80,3 +85,19 @@ Future<void> registerBatchUploadWorker() async {
   }
 }
 
+/// alex-hack: registers the tracking health check (every 15 minutes, the
+/// WorkManager minimum). No network needed, unlike the upload task.
+Future<void> registerTrackingHealthWorker() async {
+  await _ensureInitialized();
+
+  await Workmanager().registerPeriodicTask(
+    kTrackingHealthTask,
+    kTrackingHealthTask,
+    frequency: const Duration(minutes: 15),
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+  );
+
+  if (kDebugMode) {
+    debugPrint('[WorkManager] Tracking health task registered (15min)');
+  }
+}

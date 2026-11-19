@@ -312,6 +312,22 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     await updateConfiguration(settings);
   }
 
+  @override
+  Future<void> startMoving() async {
+    final TrackerSettings? settings = _lastAppliedSettings;
+    if (settings == null ||
+        settings.trackingMode != TrackingMode.automatic ||
+        _gpsPausedApplied) {
+      return;
+    }
+
+    if (kDebugMode) {
+      debugPrint('$debugPrefix Forcing moving state.');
+    }
+
+    await tl.Tracelet.changePace(true);
+  }
+
   /// alex-hack: what the phone's state asks of the tracker right now.
   /// GPS is paused at a Wi-Fi place or in battery saver. In battery saver
   /// (away from a Wi-Fi place) fixes from other apps' GPS are still taken.

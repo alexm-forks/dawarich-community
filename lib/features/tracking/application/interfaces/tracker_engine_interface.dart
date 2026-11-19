@@ -17,6 +17,11 @@ abstract interface class ITrackerEngine {
   /// Wi-Fi place) and, if what it asks of the tracker changed since the
   /// configuration was last applied, re-applies it.
   Future<void> refreshPowerState();
+
+  /// alex-hack: puts automatic mode into its moving state now (GPS on at the
+  /// moving interval), instead of waiting for motion detection. Does nothing
+  /// in timer mode or while GPS is paused.
+  Future<void> startMoving();
   Future<void> updateForegroundNotification({
     String? title,
     String? body,

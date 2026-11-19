@@ -182,6 +182,8 @@ final class PointAutomationService {
     await (_headlessRuntimeReadyFuture ??=
         _configureHeadlessRuntime(settings));
 
+    _ensureConnectivityListener(userId);
+
     return true;
   }
 
@@ -371,8 +373,14 @@ final class PointAutomationService {
       },
     );
 
-    // alex-hack: joining or leaving a Wi-Fi network is checked at once.
-    unawaited(_connectivitySub?.cancel());
+    _ensureConnectivityListener(userId);
+  }
+
+  /// alex-hack: joining or leaving a Wi-Fi network is checked at once. Set up
+  /// in whichever Flutter engine handles tracking: the app's, or the headless
+  /// one Tracelet starts when the app's UI isn't running.
+  void _ensureConnectivityListener(int userId) {
+    if (_connectivitySub != null) return;
     _connectivitySub = Connectivity().onConnectivityChanged.listen(
       (_) => unawaited(checkWifiPlaceNow(userId)),
       onError: (Object error) =>
@@ -605,6 +613,17 @@ final class PointAutomationService {
     if (activeBssid != null || currentLink != null) {
       final TrackerSettings settings = await _getTrackerSettings(userId);
       await _trackerEngine.updateConfiguration(settings);
+    }
+
+    // Leaving a Wi-Fi place means moving: start GPS now rather than waiting
+    // for motion detection to wake from the stationary state it settled into
+    // at the place.
+    if (activeBssid != null && currentLink == null) {
+      try {
+        await _trackerEngine.startMoving();
+      } catch (e, s) {
+        debugPrint('[PointAutomation] Forcing moving state failed: $e\n$s');
+      }
     }
   }
 

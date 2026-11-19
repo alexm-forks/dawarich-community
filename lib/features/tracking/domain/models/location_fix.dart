@@ -35,6 +35,10 @@ final class LocationFix {
   /// Whether the fix is suspected/known to be mocked
   final bool? isMocked;
 
+  /// alex-hack: the phone's activity recognition at this fix, in Google's
+  /// names (`WALKING`, `IN_VEHICLE`, ...); null when unknown or uncertain.
+  final String? activity;
+
   const LocationFix({
     required this.latitude,
     required this.longitude,
@@ -48,6 +52,7 @@ final class LocationFix {
     required this.headingAccuracyDegrees,
     this.provider,
     this.isMocked,
+    this.activity,
   });
 
   /// Returns a copy with selective overrides (no mutable state).
@@ -64,6 +69,7 @@ final class LocationFix {
     double? headingAccuracyDegrees,
     String? provider,
     bool? isMocked,
+    String? activity,
   }) {
     return LocationFix(
       latitude: latitude ?? this.latitude,
@@ -80,6 +86,7 @@ final class LocationFix {
       headingAccuracyDegrees ?? this.headingAccuracyDegrees,
       provider: provider ?? this.provider,
       isMocked: isMocked ?? this.isMocked,
+      activity: activity ?? this.activity,
     );
   }
 

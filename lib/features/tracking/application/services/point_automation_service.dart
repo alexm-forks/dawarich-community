@@ -714,7 +714,7 @@ final class PointAutomationService {
         speedAccuracyMps: 0,
         headingDegrees: 0,
         headingAccuracyDegrees: 0,
-        provider: 'alex-wifi-place',
+        provider: alexWifiPlaceProvider,
       ),
     );
     await AlexWifiPlaces.setLastPresencePointAt(timestampUtc);

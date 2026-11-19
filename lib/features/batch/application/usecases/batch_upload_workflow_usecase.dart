@@ -1,4 +1,5 @@
 import 'package:dawarich/core/data/repositories/local_point_repository_interfaces.dart';
+import 'package:dawarich/core/domain/models/point/alex_point_motion.dart';
 import 'package:dawarich/core/domain/models/point/dawarich/dawarich_point.dart';
 import 'package:dawarich/core/domain/models/point/dawarich/dawarich_point_batch.dart';
 import 'package:dawarich/core/domain/models/point/local/local_point.dart';
@@ -38,13 +39,16 @@ final class BatchUploadWorkflowUseCase {
       return const Err("All points already exist on the server.");
     }
 
+    final Map<int, AlexPointMotion> alexMotion =
+        await _alexMotionFor(dedupedLocalPoints);
+
     int uploaded = 0;
     for (int i = 0; i < dedupedLocalPoints.length; i += chunkSize) {
       final end = (i + chunkSize).clamp(0, dedupedLocalPoints.length);
       final chunk = dedupedLocalPoints.sublist(i, end);
 
       final List<DawarichPoint> apiPoints = chunk
-          .map((point) => point.toApi())
+          .map((point) => point.toApi(alexMotion: alexMotion[point.id]))
           .toList();
 
       final dto = DawarichPointBatch(points: apiPoints).toDto();
@@ -82,7 +86,8 @@ final class BatchUploadWorkflowUseCase {
           break;
         }
 
-        final dto = DawarichPointBatch(points: [point.toApi()]).toDto();
+        final dto = DawarichPointBatch(
+            points: [point.toApi(alexMotion: alexMotion[point.id])]).toDto();
         final result = await _api.uploadBatch(dto);
 
         if (result case Err(value: final error)) {
@@ -114,6 +119,17 @@ final class BatchUploadWorkflowUseCase {
     await _cleanupAfterUpload(userId);
 
     return const Ok(());
+  }
+
+  /// alex-hack: the points' motion data, from the hack's own table. Never
+  /// lets a problem there hold up the upload: points then go without it.
+  Future<Map<int, AlexPointMotion>> _alexMotionFor(List<LocalPoint> points) async {
+    try {
+      return await _localPointRepository.alexMotionFor(points.map((p) => p.id).toList());
+    } catch (e) {
+      debugPrint('[Upload] alex-hack: motion data unavailable: $e');
+      return const {};
+    }
   }
 
   /// After upload, delete all uploaded points except the most recent one.

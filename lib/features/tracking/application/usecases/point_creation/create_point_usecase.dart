@@ -1,3 +1,4 @@
+import 'package:dawarich/core/domain/models/point/alex_point_motion.dart';
 import 'package:dawarich/core/data/repositories/local_point_repository_interfaces.dart';
 import 'package:dawarich/core/domain/models/point/local/local_point.dart';
 import 'package:dawarich/core/domain/models/point/local/local_point_geometry.dart';
@@ -13,6 +14,9 @@ import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:dawarich/features/tracking/domain/models/point_context.dart';
 import 'package:dawarich/features/tracking/domain/models/track.dart';
 import 'package:option_result/option_result.dart';
+
+/// alex-hack: the provider name of points recorded at a linked Wi-Fi place.
+const String alexWifiPlaceProvider = 'alex-wifi-place';
 
 final class CreatePointUseCase {
 
@@ -65,6 +69,14 @@ final class CreatePointUseCase {
     return Ok(point);
   }
 
+  /// alex-hack: a Wi-Fi place point says "at this place, not moving";
+  /// a GPS fix carries the phone's activity recognition as a hint.
+  static AlexPointMotion? _alexMotion(LocationFix fix) {
+    if (fix.provider == alexWifiPlaceProvider) return AlexPointMotion.atPlace;
+    final String? activity = fix.activity;
+    return activity == null ? null : AlexPointMotion(activity: activity);
+  }
+
   LocalPoint _constructPoint(
       LocationFix fix, PointContext context, int userId, DateTime recordTimestamp) {
     final geometry = LocalPointGeometry(
@@ -88,6 +100,7 @@ final class CreatePointUseCase {
       courseAccuracy: fix.headingAccuracyDegrees,
       trackId: context.trackId,
       deviceId: context.deviceId,
+      alexMotion: _alexMotion(fix),
     );
 
     return LocalPoint(

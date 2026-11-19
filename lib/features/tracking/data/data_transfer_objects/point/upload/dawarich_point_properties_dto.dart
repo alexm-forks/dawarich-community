@@ -1,3 +1,5 @@
+import 'package:dawarich/core/domain/models/point/alex_point_motion.dart';
+
 class DawarichPointPropertiesDto {
   final String batteryState;
   final double batteryLevel;
@@ -13,6 +15,9 @@ class DawarichPointPropertiesDto {
   final String? trackId;
   final String deviceId;
 
+  /// alex-hack: motion data for Dawarich's transportation mode detection.
+  final AlexPointMotion? alexMotion;
+
   DawarichPointPropertiesDto({
     required this.batteryState,
     required this.batteryLevel,
@@ -27,6 +32,7 @@ class DawarichPointPropertiesDto {
     required this.courseAccuracy,
     this.trackId,
     required this.deviceId,
+    this.alexMotion,
   });
 
   Map<String, dynamic> toJson() {
@@ -44,6 +50,7 @@ class DawarichPointPropertiesDto {
       'course_accuracy': courseAccuracy,
       'track_id': trackId,
       'device_id': deviceId,
+      ...?alexMotion?.toJson(),
     };
   }
 }

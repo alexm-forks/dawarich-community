@@ -1,3 +1,4 @@
+import 'package:dawarich/features/tracking/application/converters/alex_activity.dart';
 
 import 'dart:async';
 
@@ -182,6 +183,7 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       headingAccuracyDegrees: coords.headingAccuracy,
       provider: location.locationSource,
       isMocked: location.isMock,
+      activity: alexGoogleActivity(location.activity),
     );
   }
 

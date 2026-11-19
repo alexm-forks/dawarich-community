@@ -1,3 +1,5 @@
+import 'package:dawarich/core/domain/models/point/alex_point_motion.dart';
+
 class LocalPointProperties {
   final String batteryState;
   final double batteryLevel;
@@ -14,6 +16,9 @@ class LocalPointProperties {
   final String? trackId;
   final String deviceId;
 
+  /// alex-hack: motion data for Dawarich (stored in its own table).
+  final AlexPointMotion? alexMotion;
+
   LocalPointProperties({
     required this.batteryState,
     required this.batteryLevel,
@@ -29,5 +34,6 @@ class LocalPointProperties {
     required this.courseAccuracy,
     this.trackId,
     required this.deviceId,
+    this.alexMotion,
   });
 }

@@ -29,7 +29,7 @@ void main() {
 
     expect(config.android.locationUpdateInterval, 5 * 60 * 1000);
     expect(config.android.fastestLocationUpdateInterval, 5000);
-    expect(config.geo.batteryBudgetPerHour, 2.0);
+    expect(config.geo.batteryBudgetPerHour, 0.0);
     expect(config.geo.enableAdaptiveMode, isTrue);
     expect(config.geo.distanceFilter, 10.0);
     expect(config.geo.desiredAccuracy, tl.DesiredAccuracy.medium);
@@ -91,7 +91,7 @@ void main() {
     expect(config.geo.desiredAccuracy, tl.DesiredAccuracy.medium);
     expect(config.android.locationUpdateInterval, 15 * 60 * 1000);
     expect(config.android.fastestLocationUpdateInterval, 15 * 60 * 1000);
-    expect(config.geo.batteryBudgetPerHour, 2.0);
+    expect(config.geo.batteryBudgetPerHour, 0.0);
     expect(config.geo.distanceFilter, 10.0);
   });
 
@@ -116,7 +116,7 @@ void main() {
 
       expect(config.android.locationUpdateInterval, 5000);
       expect(config.android.fastestLocationUpdateInterval, 2500);
-      expect(config.geo.batteryBudgetPerHour, 2.0);
+      expect(config.geo.batteryBudgetPerHour, 0.0);
       expect(config.geo.distanceFilter, 10.0);
     }
   });

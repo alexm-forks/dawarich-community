@@ -312,6 +312,22 @@ final class TraceletTrackerEngine implements ITrackerEngine {
     await updateConfiguration(settings);
   }
 
+  @override
+  Future<void> startMoving() async {
+    final TrackerSettings? settings = _lastAppliedSettings;
+    if (settings == null ||
+        settings.trackingMode != TrackingMode.automatic ||
+        _gpsPausedApplied) {
+      return;
+    }
+
+    if (kDebugMode) {
+      debugPrint('$debugPrefix Forcing moving state.');
+    }
+
+    await tl.Tracelet.changePace(true);
+  }
+
   /// alex-hack: what the phone's state asks of the tracker right now.
   /// GPS is paused at a Wi-Fi place or in battery saver. In battery saver
   /// (away from a Wi-Fi place) fixes from other apps' GPS are still taken.
@@ -464,7 +480,13 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       enableSparseUpdates: false,
       sparseDistanceThreshold: 50.0,
       sparseMaxIdleSeconds: 300,
-      batteryBudgetPerHour: boost ? 0.0 : 2.0,
+      // alex-hack: upstream's 2 %/h battery budget is off. It measures the
+      // whole phone's drain (screen, other apps), so it was nearly always
+      // "over budget" and throttled tracking (intervals x1.5-x4, lower
+      // accuracy, distance filter up to 1 km). Our own measures (motion
+      // detection, Wi-Fi pause, battery saver, moving interval) do the
+      // battery saving.
+      batteryBudgetPerHour: 0.0,
       enableDeadReckoning: false,
       deadReckoningActivationDelay: 0,
       deadReckoningMaxDuration: 0,

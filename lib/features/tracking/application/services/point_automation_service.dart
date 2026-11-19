@@ -14,6 +14,7 @@ import 'package:dawarich/features/tracking/data/preferences/alex_wifi_places.dar
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:dawarich/features/tracking/domain/models/tracker_settings.dart';
 import 'package:flutter/foundation.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:option_result/option_result.dart';
 import 'package:tracelet/tracelet.dart';
 
@@ -42,6 +43,21 @@ final class PointAutomationService {
   // checks also run when a fix arrives (at most once a minute) and straight
   // away when the network connection changes.
   static const Duration _stateCheckMinInterval = Duration(minutes: 1);
+
+  /// alex-hack: while paused at a Wi-Fi place, a fix at least this good and
+  /// this far from the place means we've left, whatever the Wi-Fi says.
+  static const double _leaveFixMaxAccuracyMeters = 100;
+  static const double _leaveDistanceMeters = 250;
+
+  /// alex-hack: writes a decision into Tracelet's log, so it shows up in a
+  /// Tracelet Doctor report (the app's own debugPrints don't). Never throws.
+  static void _alexLog(String message) {
+    debugPrint('[alex-hack] $message');
+    unawaited(
+      Tracelet.log('warn', 'alex-hack: $message')
+          .then((_) {}, onError: (Object _) {}),
+    );
+  }
   DateTime? _lastStateCheck;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
@@ -181,6 +197,8 @@ final class PointAutomationService {
 
     await (_headlessRuntimeReadyFuture ??=
         _configureHeadlessRuntime(settings));
+
+    _ensureConnectivityListener(userId);
 
     return true;
   }
@@ -371,8 +389,14 @@ final class PointAutomationService {
       },
     );
 
-    // alex-hack: joining or leaving a Wi-Fi network is checked at once.
-    unawaited(_connectivitySub?.cancel());
+    _ensureConnectivityListener(userId);
+  }
+
+  /// alex-hack: joining or leaving a Wi-Fi network is checked at once. Set up
+  /// in whichever Flutter engine handles tracking: the app's, or the headless
+  /// one Tracelet starts when the app's UI isn't running.
+  void _ensureConnectivityListener(int userId) {
+    if (_connectivitySub != null) return;
     _connectivitySub = Connectivity().onConnectivityChanged.listen(
       (_) => unawaited(checkWifiPlaceNow(userId)),
       onError: (Object error) =>
@@ -432,7 +456,37 @@ final class PointAutomationService {
       final DateTime now = DateTime.now();
       final DateTime? last = _lastStateCheck;
       if (last == null || now.difference(last) >= _stateCheckMinInterval) {
-        await _runStateChecks(userId);
+        await _runStateChecks(userId, source: 'fix');
+      }
+    }
+
+    // alex-hack: a good fix far from the paused place means we've left,
+    // even if the Wi-Fi reading hasn't caught up (or failed).
+    if (!skipValidation &&
+        locationFix.hAccuracyMeters <= _leaveFixMaxAccuracyMeters &&
+        await AlexWifiPlaces.isPaused()) {
+      final String? activeBssid = await AlexWifiPlaces.activeBssid();
+      final WifiPlaceLink? place =
+          activeBssid == null ? null : await AlexWifiPlaces.linkFor(activeBssid);
+      if (place != null) {
+        final double meters = const Distance().as(
+          LengthUnit.Meter,
+          LatLng(place.latitude, place.longitude),
+          LatLng(locationFix.latitude, locationFix.longitude),
+        );
+        final double threshold = locationFix.hAccuracyMeters * 2 >
+                _leaveDistanceMeters
+            ? locationFix.hAccuracyMeters * 2
+            : _leaveDistanceMeters;
+        if (meters > threshold) {
+          _lastStateCheck = DateTime.now();
+          await _checkWifiPlace(
+            userId,
+            source: 'fix',
+            leaveReason: 'fix ${meters.round()} m from the place '
+                '(accuracy ${locationFix.hAccuracyMeters.round()} m)',
+          );
+        }
       }
     }
 
@@ -496,7 +550,7 @@ final class PointAutomationService {
       debugPrint('[PointAutomation] Tracelet heartbeat received.');
     }
 
-    await _runStateChecks(userId);
+    await _runStateChecks(userId, source: 'heartbeat');
     await _refreshNotification(userId);
   }
 
@@ -504,13 +558,14 @@ final class PointAutomationService {
   /// unplugging, battery saver turning on or off, and an upload postponed by
   /// battery saver. Run from the heartbeat, from delivered fixes (at most once
   /// a minute), when the network connection changes and when the app opens.
-  Future<void> _runStateChecks(int userId) async {
+  Future<void> _runStateChecks(int userId, {required String source}) async {
     _lastStateCheck = DateTime.now();
 
     try {
-      await _checkWifiPlace(userId);
+      await _checkWifiPlace(userId, source: source);
     } catch (e, s) {
-      debugPrint('[PointAutomation] Wi-Fi place check error: $e\n$s');
+      _alexLog('Wi-Fi place check ($source) failed: $e');
+      debugPrint('$s');
     }
 
     try {
@@ -535,7 +590,7 @@ final class PointAutomationService {
   Future<void> checkWifiPlaceNow(int userId) => _enqueueTrackingTask(() async {
         final TrackerSettings settings = await _getTrackerSettings(userId);
         if (!settings.automaticTracking) return;
-        await _runStateChecks(userId);
+        await _runStateChecks(userId, source: 'now');
         await _refreshNotification(userId);
       });
 
@@ -543,18 +598,28 @@ final class PointAutomationService {
   /// Dawarich place, and records points at the place instead: one on arrival,
   /// one every [AlexWifiPlaces.presenceInterval] while there, and one on
   /// leaving. Normal tracking resumes as soon as the phone is off that Wi-Fi.
-  Future<void> _checkWifiPlace(int userId) async {
+  ///
+  /// [leaveReason] forces leaving the current place (e.g. a fix far away).
+  Future<void> _checkWifiPlace(
+    int userId, {
+    required String source,
+    String? leaveReason,
+  }) async {
     final String? activeBssid = await AlexWifiPlaces.activeBssid();
     final WifiPlaceLink? activeLink =
         activeBssid == null ? null : await AlexWifiPlaces.linkFor(activeBssid);
 
     WifiPlaceLink? currentLink;
-    if (await AlexWifiPlaces.enabled()) {
-      final CurrentWifi? wifi = await AlexWifiPlaces.current();
-      if (wifi != null) {
+    CurrentWifi? wifi;
+    final bool enabled = await AlexWifiPlaces.enabled();
+    if (enabled) {
+      wifi = await AlexWifiPlaces.current();
+      if (wifi != null && leaveReason == null) {
         currentLink = await AlexWifiPlaces.linkFor(wifi.bssid);
       }
     }
+    final String wifiNow =
+        wifi == null ? 'no Wi-Fi' : 'Wi-Fi ${wifi.ssid} ${wifi.bssid}';
 
     final DateTime now = DateTime.now().toUtc();
 
@@ -567,6 +632,7 @@ final class PointAutomationService {
       if (AlexWifiPlaces.normaliseBssid(currentLink.bssid) !=
           AlexWifiPlaces.normaliseBssid(activeLink.bssid)) {
         await AlexWifiPlaces.setActiveBssid(currentLink.bssid);
+        _alexLog('roamed at ${currentLink.placeName} to $wifiNow ($source)');
       }
       final DateTime? last = await AlexWifiPlaces.lastPresencePointAt();
       if (last == null ||
@@ -575,6 +641,7 @@ final class PointAutomationService {
           now.difference(last.toUtc()) >=
               AlexWifiPlaces.presenceInterval - const Duration(minutes: 1)) {
         await _recordWifiPlacePoint(userId, currentLink, now);
+        _alexLog('at ${currentLink.placeName}, place point ($source, $wifiNow)');
       }
       return;
     }
@@ -587,24 +654,34 @@ final class PointAutomationService {
       if (activeLink != null) {
         await _recordWifiPlacePoint(userId, activeLink, now);
       }
-      if (kDebugMode) {
-        debugPrint('[PointAutomation] Left Wi-Fi place; resuming GPS.');
-      }
+      _alexLog(
+        'left ${activeLink?.placeName ?? activeBssid}, resuming GPS: '
+        '${leaveReason ?? (enabled ? wifiNow : 'Wi-Fi Places turned off')} '
+        '($source)',
+      );
     }
 
     if (currentLink != null) {
       await AlexWifiPlaces.setActiveBssid(currentLink.bssid);
       await _recordWifiPlacePoint(userId, currentLink, now);
-      if (kDebugMode) {
-        debugPrint(
-          '[PointAutomation] At Wi-Fi place ${currentLink.placeName}; pausing GPS.',
-        );
-      }
+      _alexLog('arrived at ${currentLink.placeName}, pausing GPS: '
+          '$wifiNow ($source)');
     }
 
     if (activeBssid != null || currentLink != null) {
       final TrackerSettings settings = await _getTrackerSettings(userId);
       await _trackerEngine.updateConfiguration(settings);
+    }
+
+    // Leaving a Wi-Fi place means moving: start GPS now rather than waiting
+    // for motion detection to wake from the stationary state it settled into
+    // at the place.
+    if (activeBssid != null && currentLink == null) {
+      try {
+        await _trackerEngine.startMoving();
+      } catch (e) {
+        _alexLog('forcing moving state failed: $e');
+      }
     }
   }
 

@@ -1,3 +1,4 @@
+import 'package:dawarich/features/tracking/application/converters/alex_activity.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:tracelet/tracelet.dart' as tl;
 
@@ -18,5 +19,6 @@ LocationFix mapTraceletLocationToLocationFix(tl.Location location) {
     headingAccuracyDegrees: coords.headingAccuracy,
     provider: location.locationSource,
     isMocked: location.isMock,
+    activity: alexGoogleActivity(location.activity),
   );
 }

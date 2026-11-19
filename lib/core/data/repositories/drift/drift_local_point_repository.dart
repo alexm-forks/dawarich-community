@@ -1,4 +1,6 @@
+import 'package:dawarich/core/data/drift/alex_point_motion_store.dart';
 import 'package:dawarich/core/data/drift/database/sqlite_client.dart';
+import 'package:dawarich/core/domain/models/point/alex_point_motion.dart';
 import 'package:dawarich/core/data/drift/extensions/mappers/point_mapper.dart';
 import 'package:dawarich/core/data/repositories/local_point_repository_interfaces.dart';
 import 'package:dawarich/core/domain/models/point/local/local_point.dart';
@@ -43,6 +45,11 @@ final class DriftPointLocalRepository implements IPointLocalRepository {
           ),
         );
 
+        final AlexPointMotion? alexMotion = point.properties.alexMotion;
+        if (alexMotion != null) {
+          await AlexPointMotionStore.store(_database, propertiesId, alexMotion);
+        }
+
         final int pointId = await _database.into(_database.pointsTable).insert(
           PointsTableCompanion(
             type: Value(point.type),
@@ -59,6 +66,11 @@ final class DriftPointLocalRepository implements IPointLocalRepository {
     } catch (e) {
       rethrow;
     }
+  }
+
+  @override
+  Future<Map<int, AlexPointMotion>> alexMotionFor(List<int> pointIds) {
+    return AlexPointMotionStore.forPoints(_database, pointIds);
   }
 
   @override

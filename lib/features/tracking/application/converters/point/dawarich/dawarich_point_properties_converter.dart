@@ -17,6 +17,7 @@ extension PointPropertiesDtoToEntity on DawarichPointPropertiesDto {
       courseAccuracy: courseAccuracy,
       trackId: trackId,
       deviceId: deviceId,
+      alexMotion: alexMotion,
     );
   }
 }
@@ -37,6 +38,7 @@ extension PointPropertiesToDto on DawarichPointProperties {
       courseAccuracy: courseAccuracy,
       trackId: trackId,
       deviceId: deviceId,
+      alexMotion: alexMotion,
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'package:dawarich/core/domain/models/point/alex_point_motion.dart';
 import 'package:dawarich/core/domain/models/point/local/local_point.dart';
 import 'package:dawarich/features/tracking/domain/models/last_point.dart';
 import 'package:option_result/option_result.dart';
@@ -22,4 +23,7 @@ abstract interface class IPointLocalRepository {
   /// Returns the timestamp of the oldest un-uploaded point for a user,
   /// or null if there are no pending points.
   Future<DateTime?> getOldestUnUploadedPointTimestamp(int userId);
+
+  /// alex-hack: motion data for these points (by point id), for upload.
+  Future<Map<int, AlexPointMotion>> alexMotionFor(List<int> pointIds);
 }

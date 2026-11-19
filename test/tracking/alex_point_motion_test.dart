@@ -110,6 +110,17 @@ void main() {
     expect(motion.containsKey(plain), isFalse);
   });
 
+  test('a duplicate point keeps the first point\'s motion', () async {
+    final id = await repo.storePoint(_point(1, motion: const AlexPointMotion(activity: 'WALKING')));
+    // Same time and place again (another engine recording it): the point's
+    // insert is ignored, its new properties row is left without a point.
+    await repo.storePoint(_point(1, motion: const AlexPointMotion(activity: 'IN_VEHICLE')));
+
+    final batch = await repo.getCurrentBatch(1);
+    expect(batch.map((p) => p.id), [id]);
+    expect(await repo.alexMotionFor([id]), {id: const AlexPointMotion(activity: 'WALKING')});
+  });
+
   test('motion of deleted points is cleaned up when the app next starts', () async {
     final dir = await Directory.systemTemp.createTemp('alex_motion');
     addTearDown(() => dir.delete(recursive: true));

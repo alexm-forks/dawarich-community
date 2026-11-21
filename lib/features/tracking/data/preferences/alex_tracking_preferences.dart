@@ -14,6 +14,7 @@ final class AlexTrackingPreferences {
   static const String _movingIntervalKey = 'alex.tracking.moving_interval_seconds';
   static const String _chargingBoostKey = 'alex.tracking.charging_boost';
   static const String _batterySaverPauseKey = 'alex.tracking.battery_saver_pause';
+  static const String _vehicleUntilKey = 'alex.tracking.vehicle_until_ms';
 
   /// Seconds between fixes while moving in automatic mode.
   static const int defaultMovingIntervalSeconds = 300;
@@ -40,6 +41,24 @@ final class AlexTrackingPreferences {
 
   static Future<void> setMovingIntervalSeconds(int seconds) =>
       SharedPreferencesAsync().setInt(_movingIntervalKey, seconds);
+
+  /// Until when vehicle mode (dense fixes at vehicle speed) lasts. Kept here
+  /// rather than in memory, as the fix that starts it and the heartbeat that
+  /// ends it may arrive in different parts of the app.
+  static Future<DateTime?> vehicleUntil() async {
+    try {
+      final int? ms = await SharedPreferencesAsync().getInt(_vehicleUntilKey);
+      return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[AlexTrackingPreferences] Read failed: $error');
+      }
+      return null;
+    }
+  }
+
+  static Future<void> setVehicleUntil(DateTime until) =>
+      SharedPreferencesAsync().setInt(_vehicleUntilKey, until.millisecondsSinceEpoch);
 
   static Future<bool> chargingBoost() async {
     try {

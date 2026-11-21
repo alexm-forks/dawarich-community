@@ -120,4 +120,56 @@ void main() {
       expect(config.geo.distanceFilter, 10.0);
     }
   });
+
+  // alex-hack: a drive tracked at the 5-minute interval kept dropping to
+  // "stationary": the speed machine's 180 s countdown after a slow fix ran
+  // out before the next fix could show it was still moving.
+  test('the stationary countdown is at least twice the interval', () {
+    int delay(tl.Config config) => config.motion.speedStationaryDelay;
+
+    expect(delay(engine.buildConfigurationForTest(settings(frequency: 0))), 600);
+    expect(
+      delay(engine.buildConfigurationForTest(settings(frequency: 0), movingIntervalSeconds: 30)),
+      180,
+    );
+    expect(
+      delay(engine.buildConfigurationForTest(settings(frequency: 0), chargingBoost: true)),
+      180,
+    );
+  });
+
+  test('vehicle speed: a fix every 15 s, no adaptive gate', () {
+    final tl.Config config = engine.buildConfigurationForTest(
+      settings(frequency: 0),
+      vehicle: true,
+    );
+
+    expect(config.android.locationUpdateInterval, 15000);
+    expect(config.android.fastestLocationUpdateInterval, 5000);
+    expect(config.geo.enableAdaptiveMode, isFalse);
+    expect(config.motion.speedStationaryDelay, 180);
+  });
+
+  test('vehicle mode gives way to the boost, a pause and a shorter interval', () {
+    expect(
+      engine.buildConfigurationForTest(settings(frequency: 0), vehicle: true, chargingBoost: true)
+          .android.locationUpdateInterval,
+      2000,
+    );
+    expect(
+      engine.buildConfigurationForTest(settings(frequency: 0), vehicle: true, gpsPaused: true)
+          .android.locationUpdateInterval,
+      15 * 60 * 1000,
+    );
+    expect(
+      engine.buildConfigurationForTest(settings(frequency: 0), vehicle: true, movingIntervalSeconds: 5)
+          .android.locationUpdateInterval,
+      5000,
+    );
+    expect(
+      engine.buildConfigurationForTest(settings(frequency: 10), vehicle: true)
+          .android.locationUpdateInterval,
+      5000,
+    );
+  });
 }

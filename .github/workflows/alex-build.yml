@@ -11,6 +11,7 @@ on:
       - "pubspec.yaml"
       - "pubspec.lock"
       - "lib/**"
+      - "packages/**"
       - "android/**"
       - "assets/**"
       - ".github/workflows/alex-build.yml"

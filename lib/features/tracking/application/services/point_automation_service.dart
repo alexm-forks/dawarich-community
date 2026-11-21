@@ -453,6 +453,18 @@ final class PointAutomationService {
     // power checks (before deciding whether to drop it), since the heartbeat
     // may not be firing.
     if (!skipValidation) {
+      try {
+        if (await _trackerEngine.noteFixSpeed(
+          locationFix.speedMps,
+          accuracyMeters: locationFix.hAccuracyMeters,
+        )) {
+          await _trackerEngine.refreshPowerState(
+            settings: await _getTrackerSettings(userId),
+          );
+        }
+      } catch (e, s) {
+        debugPrint('[PointAutomation] Vehicle speed check error: $e\n$s');
+      }
       final DateTime now = DateTime.now();
       final DateTime? last = _lastStateCheck;
       if (last == null || now.difference(last) >= _stateCheckMinInterval) {
@@ -569,7 +581,9 @@ final class PointAutomationService {
     }
 
     try {
-      await _trackerEngine.refreshPowerState();
+      await _trackerEngine.refreshPowerState(
+        settings: await _getTrackerSettings(userId),
+      );
     } catch (e, s) {
       debugPrint('[PointAutomation] Power state refresh error: $e\n$s');
     }

@@ -13,10 +13,17 @@ abstract interface class ITrackerEngine {
   Future<tl.State> configure(TrackerSettings settings);
   Future<tl.State> updateConfiguration(TrackerSettings settings);
 
-  /// alex-hack: re-checks the phone's power state (charging, battery saver,
-  /// Wi-Fi place) and, if what it asks of the tracker changed since the
-  /// configuration was last applied, re-applies it.
-  Future<void> refreshPowerState();
+  /// alex-hack: re-checks the phone's power state (charger, battery saver,
+  /// Wi-Fi place, vehicle speed) and, if what it asks of the tracker changed
+  /// since the configuration was last applied (or none was applied in this
+  /// part of the app), re-applies it. [settings] are the current tracker
+  /// settings, where the caller has them.
+  Future<void> refreshPowerState({TrackerSettings? settings});
+
+  /// alex-hack: a delivered fix's speed: at vehicle speed, tracks densely for
+  /// a while (see TraceletTrackerEngine.vehicleSpeedMps). Returns whether
+  /// [refreshPowerState] should run now to apply it.
+  Future<bool> noteFixSpeed(double speedMps, {double? accuracyMeters});
 
   /// alex-hack: puts automatic mode into its moving state now (GPS on at the
   /// moving interval), instead of waiting for motion detection. Does nothing

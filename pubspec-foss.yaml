@@ -15,6 +15,9 @@ dependencies:
   android_intent_plus: ^6.1.0
   auto_route: ^11.1.0
   battery_plus: ^7.1.2
+  # alex-hack: whether a charger is connected, for the charging boost.
+  alex_power:
+    path: packages/alex_power
   connectivity_plus: ^7.3.1
   country: ^6.0.3
   dawarich_android_user_module:

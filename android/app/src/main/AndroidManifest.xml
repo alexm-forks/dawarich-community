@@ -34,18 +34,15 @@
     >
 
 
-        <service
-                android:name="id.flutter.flutter_background_service.BackgroundService"
-                android:exported="false"
-                android:stopWithTask="false"
-                android:foregroundServiceType="location"
-                tools:replace="android:exported,android:stopWithTask,android:foregroundServiceType"
-        />
-
-        <!-- alex-hack: upstream's AppUpdateReceiver removed. It started the old
-             flutter_background_service tracker after every app update; nothing
-             configures that service since the 0.21 Tracelet rewrite, so it only
-             left a stuck "Background Service - Preparing" notification. -->
+        <!-- alex-hack: the old flutter_background_service tracker is gone
+             (dependency removed), with upstream's AppUpdateReceiver. Nothing
+             has configured it since the 0.21 Tracelet rewrite, but its own
+             BootReceiver kept starting it on every boot and app update (the
+             "autoStartOnBoot" setting from older versions stays stored),
+             and its idle Flutter engine became Tracelet's primary engine:
+             Tracelet sent it every location, nobody in it listened, and it
+             never fell back to the headless task, so points stopped whenever
+             the app's own engine was gone. -->
 
         <activity
             android:name="dev.abralabs.travel.MainActivity"

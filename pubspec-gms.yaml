@@ -30,7 +30,6 @@ dependencies:
   native_dio_adapter: ^1.8.0
   drift: ^2.31.0
   fl_chart: ^1.1.1
-  flutter_background_service: ^5.1.0
   # alex-hack: "tracking has no location access" notification
   flutter_local_notifications: ^20.1.0
   flutter_map: ^8.2.2

@@ -1,5 +1,6 @@
 import 'package:dawarich/core/di/background_provider_container.dart';
 import 'package:dawarich/core/di/providers/app_providers.dart';
+import 'package:dawarich/features/tracking/application/converters/alex_activity.dart';
 import 'package:dawarich/features/tracking/application/services/point_automation_service.dart';
 import 'package:dawarich/features/tracking/domain/models/location_fix.dart';
 import 'package:flutter/foundation.dart';
@@ -94,7 +95,7 @@ Future<void> _handleDawarichTraceletHeadlessEvent(
     if (name == 'location') {
 
       final LocationFix? locationFix =
-      _mapTraceletHeadlessLocationPayload(payload);
+      mapTraceletHeadlessLocationPayload(payload);
 
       if (locationFix == null) {
         if (kDebugMode) {
@@ -142,7 +143,8 @@ Future<void> _handleDawarichTraceletHeadlessEvent(
   }
 }
 
-LocationFix? _mapTraceletHeadlessLocationPayload(
+@visibleForTesting
+LocationFix? mapTraceletHeadlessLocationPayload(
     Map<String, Object?> payload,
     ) {
   final Map<String, Object?> coords =
@@ -175,6 +177,12 @@ LocationFix? _mapTraceletHeadlessLocationPayload(
     headingAccuracyDegrees: _asDouble(coords['headingAccuracy']) ?? -1.0,
     provider: payload['locationSource']?.toString() ?? 'unknown',
     isMocked: payload['mock'] == true,
+    // alex-hack: the activity hint, as the live (app open) path sets it.
+    // Without it, points saved with the app closed (most of the day) had no
+    // transport-mode hint for Dawarich.
+    activity: alexGoogleActivity(
+      tl.LocationActivity.fromMap(_asStringObjectMap(payload['activity'])),
+    ),
   );
 }
 

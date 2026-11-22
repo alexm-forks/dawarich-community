@@ -25,6 +25,16 @@ abstract interface class ITrackerEngine {
   /// [refreshPowerState] should run now to apply it.
   Future<bool> noteFixSpeed(double speedMps, {double? accuracyMeters});
 
+  /// alex-hack: fixes the tracker stored that the app never handled (they
+  /// reached no part of the app that saves points), oldest first.
+  Future<List<({String uuid, LocationFix fix})>> storedFixes({
+    Duration olderThan,
+    int limit,
+  });
+
+  /// alex-hack: forgets a stored fix once it has been dealt with.
+  Future<void> forgetStoredFix(String uuid);
+
   /// alex-hack: puts automatic mode into its moving state now (GPS on at the
   /// moving interval), instead of waiting for motion detection. Does nothing
   /// in timer mode or while GPS is paused.

@@ -172,4 +172,15 @@ void main() {
       5000,
     );
   });
+
+  // alex-hack: Tracelet keeps a copy of every location, so fixes that never
+  // reach the part of the app that saves points can be recovered later.
+  test('locations are kept by the tracker until the app has dealt with them', () {
+    for (final int frequency in [0, 10]) {
+      final tl.Config config = engine.buildConfigurationForTest(settings(frequency: frequency));
+      expect(config.persistence.persistMode, tl.PersistMode.location);
+      expect(config.persistence.maxDaysToPersist, 3);
+      expect(config.persistence.maxRecordsToPersist, greaterThanOrEqualTo(50000));
+    }
+  });
 }

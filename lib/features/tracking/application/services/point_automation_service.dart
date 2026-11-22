@@ -508,6 +508,7 @@ final class PointAutomationService {
       if (kDebugMode) {
         debugPrint('[PointAutomation] At a Wi-Fi place; fix dropped.');
       }
+      await _forgetStored(locationFix);
       return;
     }
 
@@ -520,6 +521,7 @@ final class PointAutomationService {
       if (kDebugMode) {
         debugPrint('[PointAutomation] Battery saver; coarse fix dropped.');
       }
+      await _forgetStored(locationFix);
       return;
     }
 
@@ -535,6 +537,7 @@ final class PointAutomationService {
         final storeResult = await _storePoint(point);
 
         if (storeResult case Ok()) {
+          await _forgetStored(locationFix);
           final int batchCount = await _getBatchPointCount(userId);
           final TrackerSettings settings = await _getTrackerSettings(userId);
 
@@ -547,6 +550,8 @@ final class PointAutomationService {
           debugPrint('[PointAutomation] Failed to store point: $message');
         }
       } else if (pointResult case Err(value: final message)) {
+        // Rejected on purpose (too close, too inaccurate, not newer).
+        await _forgetStored(locationFix);
         debugPrint('[PointAutomation] Point creation error: $message');
       }
     } catch (error, stackTrace) {
@@ -567,11 +572,19 @@ final class PointAutomationService {
   }
 
   /// alex-hack: arriving at or leaving a Wi-Fi place, plugging in or
-  /// unplugging, battery saver turning on or off, and an upload postponed by
-  /// battery saver. Run from the heartbeat, from delivered fixes (at most once
-  /// a minute), when the network connection changes and when the app opens.
+  /// unplugging, battery saver turning on or off, fixes that never became
+  /// points, and an upload postponed by battery saver. Run from the
+  /// heartbeat, from delivered fixes (at most once a minute), when the
+  /// network connection changes and when the app opens.
   Future<void> _runStateChecks(int userId, {required String source}) async {
     _lastStateCheck = DateTime.now();
+
+    try {
+      await _recoverMissedFixes(userId);
+    } catch (e, s) {
+      _alexLog('recovering missed fixes failed: $e');
+      debugPrint('$s');
+    }
 
     try {
       await _checkWifiPlace(userId, source: source);
@@ -595,6 +608,83 @@ final class PointAutomationService {
       }
     } catch (e, s) {
       debugPrint('[PointAutomation] Upload catch-up error: $e\n$s');
+    }
+  }
+
+  /// alex-hack: fixes that reached no part of the app that saves points.
+  /// Tracelet hands each fix to the Flutter engines listening for it, and can
+  /// go on handing them to one that never saves them (on 22 Nov, two hours of
+  /// a drive, until the app was opened). It also keeps its own copy of every
+  /// fix, which is forgotten once handled; the ones left are made into points
+  /// here, spaced by the minimum point distance. The usual checks against the
+  /// last point (newer, far enough) don't apply: these are older by nature.
+  /// Wi-Fi place and battery saver dropping don't either: they're about now.
+  Future<void> _forgetStored(LocationFix fix) async {
+    final String? id = fix.storedId;
+    if (id != null) await _trackerEngine.forgetStoredFix(id);
+  }
+
+  static const int _recoverBatch = 250;
+  static const int _recoverMaxPerRun = 5000;
+
+  Future<void> _recoverMissedFixes(int userId) async {
+    final TrackerSettings settings = await _getTrackerSettings(userId);
+    if (!settings.automaticTracking) return;
+
+    final double minDistance =
+        settings.effectiveMinimumPointDistanceMeters.toDouble();
+    int recovered = 0;
+    int skipped = 0;
+    LocationFix? previous;
+    DateTime? first;
+    DateTime? last;
+
+    while (recovered + skipped < _recoverMaxPerRun) {
+      final stored = await _trackerEngine.storedFixes(limit: _recoverBatch);
+      if (stored.isEmpty) break;
+      for (final ({String uuid, LocationFix fix}) item in stored) {
+        final LocationFix fix = item.fix;
+        final bool tooClose = previous != null &&
+            const Distance().as(
+                  LengthUnit.Meter,
+                  LatLng(previous.latitude, previous.longitude),
+                  LatLng(fix.latitude, fix.longitude),
+                ) <
+                minDistance;
+        bool saved = false;
+        if (!tooClose) {
+          final pointResult = await _createPoint(
+            position: fix,
+            timestamp: fix.timestampUtc,
+            userId: userId,
+            skipValidation: true,
+          );
+          if (pointResult case Ok(value: final point)) {
+            saved = (await _storePoint(point)) is Ok;
+          }
+        }
+        if (saved) {
+          recovered++;
+          previous = fix;
+          first ??= fix.timestampUtc;
+          last = fix.timestampUtc;
+        } else {
+          skipped++;
+        }
+        await _trackerEngine.forgetStoredFix(item.uuid);
+      }
+      if (stored.length < _recoverBatch) break;
+    }
+
+    if (recovered + skipped > 0) {
+      String hhmm(DateTime? t) {
+        final DateTime local = (t ?? DateTime.now()).toLocal();
+        return '${local.hour.toString().padLeft(2, '0')}:'
+            '${local.minute.toString().padLeft(2, '0')}';
+      }
+      _alexLog('recovered $recovered fixes that never became points '
+          '(${hhmm(first)}–${hhmm(last)}); $skipped skipped (too close '
+          'together or not stored)');
     }
   }
 

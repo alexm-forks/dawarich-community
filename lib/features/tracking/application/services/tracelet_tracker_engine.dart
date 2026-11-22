@@ -67,6 +67,10 @@ final class TraceletTrackerEngine implements ITrackerEngine {
   // default 180 s, a drive kept dropping to stationary.
   static const int _minStationaryDelaySeconds = 180;
 
+  /// Tracelet's own store of locations (see the persistence config): a day
+  /// of the 2 s charging boost is about 43,000.
+  static const int _maxStoredFixes = 100000;
+
   static TrackerSettings? _lastAppliedSettings;
   static bool _chargingBoostApplied = false;
   static bool _gpsPausedApplied = false;
@@ -205,6 +209,7 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       provider: location.locationSource,
       isMocked: location.isMock,
       activity: alexGoogleActivity(location.activity),
+      storedId: location.uuid,
     );
   }
 
@@ -372,6 +377,37 @@ final class TraceletTrackerEngine implements ITrackerEngine {
       await AlexTrackingPreferences.setVehicleUntil(now.add(vehicleHold));
     }
     return !_vehicleApplied;
+  }
+
+  /// alex-hack: locations Tracelet stored that the app never handled (they
+  /// reached no part of the app that saves points), oldest first. Only those
+  /// older than [olderThan], so one still on its way to the handler isn't
+  /// taken twice.
+  @override
+  Future<List<({String uuid, LocationFix fix})>> storedFixes({
+    Duration olderThan = const Duration(minutes: 2),
+    int limit = 250,
+  }) async {
+    final List<tl.Location> locations = await tl.Tracelet.getLocations(
+      tl.SQLQuery(end: DateTime.now().subtract(olderThan), limit: limit),
+    );
+    return [
+      for (final tl.Location location in locations)
+        (uuid: location.uuid, fix: _mapLocationFix(location)),
+    ];
+  }
+
+  @override
+  Future<void> forgetStoredFix(String uuid) => _forgetStoredFix(uuid);
+
+  static Future<void> _forgetStoredFix(String uuid) async {
+    try {
+      await tl.Tracelet.destroyLocation(uuid);
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[TraceletTrackerEngine] Forgetting a stored fix failed: $error');
+      }
+    }
   }
 
   static void _alexLog(String message) {
@@ -692,8 +728,16 @@ final class TraceletTrackerEngine implements ITrackerEngine {
         : const tl.MotionConfig();
 
     final tl.GeofenceConfig geofenceConfig = tl.GeofenceConfig();
+    // alex-hack: Tracelet keeps its own copy of every location, which the
+    // app forgets once it has handled it. Events can stop reaching the part
+    // of the app that saves points (on 22 Nov a drive went missing for two
+    // hours while GPS worked throughout, until the app was opened); the
+    // copies it never handled are made into points later (see
+    // [storedFixes]). Kept 3 days at most.
     final tl.PersistenceConfig persistenceConfig = tl.PersistenceConfig(
-      persistMode: tl.PersistMode.none
+      persistMode: tl.PersistMode.location,
+      maxDaysToPersist: 3,
+      maxRecordsToPersist: _maxStoredFixes,
     );
     final tl.AuditConfig auditConfig = tl.AuditConfig();
     final tl.PrivacyZoneConfig privacyZoneConfig = tl.PrivacyZoneConfig();

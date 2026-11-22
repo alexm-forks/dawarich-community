@@ -39,6 +39,10 @@ final class LocationFix {
   /// names (`WALKING`, `IN_VEHICLE`, ...); null when unknown or uncertain.
   final String? activity;
 
+  /// alex-hack: the tracker's id for its stored copy of this fix, forgotten
+  /// once the fix has been dealt with (see PointAutomationService).
+  final String? storedId;
+
   const LocationFix({
     required this.latitude,
     required this.longitude,
@@ -53,6 +57,7 @@ final class LocationFix {
     this.provider,
     this.isMocked,
     this.activity,
+    this.storedId,
   });
 
   /// Returns a copy with selective overrides (no mutable state).
@@ -70,6 +75,7 @@ final class LocationFix {
     String? provider,
     bool? isMocked,
     String? activity,
+    String? storedId,
   }) {
     return LocationFix(
       latitude: latitude ?? this.latitude,
@@ -87,6 +93,7 @@ final class LocationFix {
       provider: provider ?? this.provider,
       isMocked: isMocked ?? this.isMocked,
       activity: activity ?? this.activity,
+      storedId: storedId ?? this.storedId,
     );
   }
 

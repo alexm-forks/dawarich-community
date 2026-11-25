@@ -109,3 +109,7 @@ dependency_overrides:
       url: https://github.com/sunstep/http.git
       ref: master
       path: pkgs/cronet_http
+  # alex-hack: patched copy of Tracelet's Android plugin (engine routing fix).
+  # See packages/tracelet_android/ALEX-HACK.md.
+  tracelet_android:
+    path: packages/tracelet_android

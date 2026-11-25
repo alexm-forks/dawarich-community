@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.ikolvi.tracelet.sdk.TraceletSdk
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.BinaryMessenger
 import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.mock
@@ -298,6 +299,101 @@ internal class PluginSecondaryEngineGuardTest {
     }
 
     /**
+     * alex-hack: the first engine in the process is not necessarily the app's
+     * UI. A WorkManager job (or another plugin's background engine) started
+     * while the UI is closed attaches first and becomes primary; it has no
+     * activity and its Dart side never subscribes, so it must not join the
+     * fan-out, and events must keep a route to the headless task.
+     */
+    @Test
+    fun primaryWithoutActivityOrSubscription_doesNotJoinTheEventFanOut() {
+        val worker = TraceletAndroidPlugin()
+        worker.onAttachedToEngine(createMockBinding("workmanager"))
+
+        assertEquals(
+            0,
+            globalDispatcherCount(),
+            "a primary engine that has neither an activity nor a subscription " +
+                "must not swallow events meant for the headless task",
+        )
+        assertNotNull(
+            globalFanOutFallback(),
+            "with the primary held out, events need the headless route",
+        )
+        // It is still the primary: SDK initialised and event sender set.
+        verify(mockSdk).setEventSender(any())
+        verify(mockSdk).initialize()
+    }
+
+    /** alex-hack: the app's UI engine joins as soon as its activity attaches. */
+    @Test
+    fun primaryJoinsTheEventFanOut_whenAnActivityAttaches() {
+        val primary = TraceletAndroidPlugin()
+        primary.onAttachedToEngine(createMockBinding("primary"))
+        primary.onAttachedToActivity(createMockActivityBinding())
+
+        assertEquals(1, globalDispatcherCount())
+
+        // A config change re-attaches the activity; and Dart subscribing later
+        // must not add the same engine again.
+        primary.onDetachedFromActivityForConfigChanges()
+        primary.onReattachedToActivityForConfigChanges(createMockActivityBinding())
+        primary.onDartEventsSubscribed()
+        assertEquals(1, globalDispatcherCount())
+    }
+
+    /**
+     * alex-hack: a primary engine without an activity whose Dart side does
+     * listen (e.g. a pre-warmed engine) joins when it subscribes.
+     */
+    @Test
+    fun primaryJoinsTheEventFanOut_whenItsDartSideSubscribes() {
+        val primary = TraceletAndroidPlugin()
+        primary.onAttachedToEngine(createMockBinding("primary"))
+        primary.onDartEventsSubscribed()
+
+        assertEquals(1, globalDispatcherCount())
+    }
+
+    /**
+     * alex-hack: the reported sequence. The UI engine has gone, a WorkManager
+     * engine attaches and becomes primary, then the app is opened: only the
+     * UI engine (once subscribed) receives events, and when the worker
+     * finishes the UI engine keeps them.
+     */
+    @Test
+    fun workerPrimaryThenAppOpened_onlyTheUiEngineReceives() {
+        val worker = TraceletAndroidPlugin()
+        val workerBinding = createMockBinding("workmanager")
+        worker.onAttachedToEngine(workerBinding)
+
+        val ui = TraceletAndroidPlugin()
+        ui.onAttachedToEngine(createMockBinding("ui"))
+        ui.onAttachedToActivity(createMockActivityBinding())
+        assertEquals(0, globalDispatcherCount(), "secondary UI waits for its subscription")
+        ui.onDartEventsSubscribed()
+        assertEquals(1, globalDispatcherCount())
+
+        worker.onDetachedFromEngine(workerBinding)
+        assertEquals(1, globalDispatcherCount(), "the UI engine keeps receiving")
+    }
+
+    /**
+     * alex-hack: a primary that detaches before joining must not join later on
+     * a late handshake.
+     */
+    @Test
+    fun primaryCannotJoinAfterItDetached() {
+        val worker = TraceletAndroidPlugin()
+        val binding = createMockBinding("workmanager")
+        worker.onAttachedToEngine(binding)
+        worker.onDetachedFromEngine(binding)
+        worker.onDartEventsSubscribed()
+
+        assertEquals(0, globalDispatcherCount())
+    }
+
+    /**
      * When multiple engines attach, the SDK should only be initialized once
      * (by the first engine).
      */
@@ -413,6 +509,12 @@ internal class PluginSecondaryEngineGuardTest {
         `when`(binding.binaryMessenger).thenReturn(messenger)
         `when`(binding.applicationContext).thenReturn(context)
 
+        return binding
+    }
+
+    private fun createMockActivityBinding(): ActivityPluginBinding {
+        val binding = mock(ActivityPluginBinding::class.java)
+        `when`(binding.activity).thenReturn(mock(android.app.Activity::class.java))
         return binding
     }
 

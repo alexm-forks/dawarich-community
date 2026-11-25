@@ -192,12 +192,13 @@ class TraceletAndroidPlugin :
 
     /**
      * Messenger of a secondary **UI** engine that has not yet shown that its
-     * Dart side listens for events (#364).
+     * Dart side listens for events (#364), or (alex-hack) of the primary
+     * before it has an activity or a subscription.
      *
-     * Non-null only between this engine's attach and the
-     * [onDartEventsSubscribed] handshake that lets it join the fan-out; null on
-     * the primary instance and on every headless engine, both of which must
-     * never take this path.
+     * Non-null only between this engine's attach and the moment it joins the
+     * fan-out ([onDartEventsSubscribed], or [onAttachedToActivity] for the
+     * primary); always null on a headless engine, which must never take this
+     * path.
      */
     @Volatile private var pendingUiMessenger: BinaryMessenger? = null
 
@@ -225,8 +226,25 @@ class TraceletAndroidPlugin :
             sdk.logger.debug("onAttachedToEngine: setting as PRIMARY instance")
 
             eventDispatcher = EventDispatcher()
-            eventDispatcher.register(binding.binaryMessenger)
-            globalEventSender.add(eventDispatcher)
+            // alex-hack: the primary waits for evidence before joining the
+            // fan-out, like a secondary UI engine does (#364). Being the first
+            // engine in the process is not evidence that it listens: a
+            // WorkManager job, or any other plugin's background engine, started
+            // while the app's UI is closed attaches first and became primary,
+            // and the primary counted as receiving from the moment it attached.
+            // Every event then went into an isolate with no listeners instead
+            // of the headless task, for as long as that engine lived.
+            //
+            // It joins when an activity attaches to it (the app's own UI engine,
+            // straight after this attach and before any Dart runs) or when its
+            // Dart side subscribes to an event stream. Until then the fan-out
+            // routes events to the headless task wired below.
+            pendingUiMessenger = binding.binaryMessenger
+            TraceletLog.lifecycle(
+                "engines: primary attach (engineCount=$count); events go to " +
+                    "the headless task until it has an activity or its Dart " +
+                    "side subscribes (alex-hack)"
+            )
 
             sdk.setEventSender(globalEventSender)
             
@@ -395,16 +413,25 @@ class TraceletAndroidPlugin :
      */
     @Synchronized
     internal fun onDartEventsSubscribed() {
+        joinFanOut("subscribed")
+    }
+
+    /**
+     * Joins the event fan-out with the messenger held in [pendingUiMessenger],
+     * once. [reason] is only for the log.
+     */
+    @Synchronized
+    private fun joinFanOut(reason: String) {
         val messenger = pendingUiMessenger ?: return
         pendingUiMessenger = null
         eventDispatcher.register(messenger)
         globalEventSender.add(eventDispatcher)
         // Lifecycle, not debug, for the same reason the attach decision above is
-        // (#318/#358): this is the moment a secondary engine starts receiving
-        // events, and its absence from a report is the finding.
+        // (#318/#358): this is the moment an engine starts receiving events,
+        // and its absence from a report is the finding.
+        val which = if (primaryInstance === this) "primary" else "secondary UI"
         TraceletLog.lifecycle(
-            "engines: secondary UI engine subscribed — joining the event " +
-                "fan-out (#364)"
+            "engines: $which engine $reason — joining the event fan-out (#364)"
         )
     }
 
@@ -451,6 +478,10 @@ class TraceletAndroidPlugin :
         activityBinding = binding
         binding.addRequestPermissionsResultListener(this)
         sdk.activity = binding.activity
+        // alex-hack: an activity on the primary engine means it is the app's
+        // UI, which receives events as it always has. Secondary engines still
+        // wait for their Dart side to subscribe (#364).
+        if (primaryInstance === this) joinFanOut("has an activity")
     }
 
     override fun onDetachedFromActivityForConfigChanges() {

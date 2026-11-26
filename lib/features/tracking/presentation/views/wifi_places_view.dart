@@ -139,30 +139,40 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
 
     List<CurrentWifi> accessPoints =
         AlexWifiPlaces.sameNetwork(current, scan ?? const []);
+    List<String> unlink = const [];
     if (accessPoints.length > 1) {
-      final List<CurrentWifi>? chosen = await showDialog<List<CurrentWifi>>(
+      final _AccessPointChoice? choice = await showDialog<_AccessPointChoice>(
         context: context,
         builder: (_) => _AccessPointsDialog(
           network: _wifiLabel(current.ssid),
-          placeName: place.name,
+          place: place,
           accessPoints: accessPoints,
           scan: scan ?? const [],
+          links: _links,
         ),
       );
-      if (chosen == null || !mounted) return;
-      accessPoints = chosen;
+      if (choice == null || !mounted) return;
+      accessPoints = choice.link;
+      unlink = choice.unlink;
     }
 
-    final bool ok = await _change((sync) => sync.link(accessPoints, place));
+    final bool ok = await _change(
+      (sync) => sync.link(accessPoints, place, unlink: unlink),
+    );
     if (!ok || !mounted) return;
     final String what = accessPoints.length == 1
         ? _wifiLabel(current.ssid)
         : '${accessPoints.length} access points of ${_wifiLabel(current.ssid)}';
-    final String scanNote = scan == null
-        ? ' (couldn\'t scan for its other access points)'
-        : '';
+    final String scanNote =
+        scan == null ? ' (couldn\'t scan for its other access points)' : '';
+    final String unlinked = unlink.isEmpty
+        ? ''
+        : unlink.length == 1
+            ? ', unlinked 1'
+            : ', unlinked ${unlink.length}';
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Linked $what to ${place.name}$scanNote')),
+      SnackBar(
+          content: Text('Linked $what to ${place.name}$unlinked$scanNote')),
     );
   }
 
@@ -284,7 +294,8 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                         'a "wifi: <BSSID> <name>" line. Linking also offers the '
                         'network\'s other access points in range (mesh Wi-Fi, a '
                         'router\'s 2.4/5 GHz radios); untick any that aren\'t '
-                        'this place\'s. For ones out of range, link again near '
+                        'this place\'s (unticking one linked here unlinks it). '
+                        'For ones out of range, link again near '
                         'them, or add their lines to the note in Dawarich. '
                         'Only link fixed routers: a phone hotspot or travel '
                         'router moves with you and would pin you to the place.',
@@ -306,7 +317,8 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                       (link) => ListTile(
                         leading: const Icon(Icons.router_outlined),
                         title: Text(link.placeName),
-                        subtitle: Text('${_wifiLabel(link.ssid)}\n${link.bssid}'),
+                        subtitle:
+                            Text('${_wifiLabel(link.ssid)}\n${link.bssid}'),
                         isThreeLine: true,
                         trailing: IconButton(
                           tooltip: 'Remove',
@@ -342,19 +354,28 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// alex-hack: which of a network's access points in range to link. All are
-/// ticked; the connected one (first) can't be unticked.
+/// What the access point dialog returns: BSSIDs to link to the place, and
+/// ones already linked to it that were unticked.
+typedef _AccessPointChoice = ({List<CurrentWifi> link, List<String> unlink});
+
+/// alex-hack: which of a network's access points in range to link. New ones
+/// and ones already linked to this place start ticked; unticking one that is
+/// linked to this place unlinks it on save. The connected one (first) can't
+/// be unticked. Only access points this scan saw are listed, so links the
+/// scan didn't see are never touched.
 class _AccessPointsDialog extends StatefulWidget {
   final String network;
-  final String placeName;
+  final DawarichPlace place;
   final List<CurrentWifi> accessPoints;
   final List<WifiAccessPoint> scan;
+  final List<WifiPlaceLink> links;
 
   const _AccessPointsDialog({
     required this.network,
-    required this.placeName,
+    required this.place,
     required this.accessPoints,
     required this.scan,
+    required this.links,
   });
 
   @override
@@ -366,6 +387,15 @@ class _AccessPointsDialogState extends State<_AccessPointsDialog> {
     for (final ap in widget.accessPoints) ap.bssid,
   };
 
+  WifiPlaceLink? _linkFor(String bssid) {
+    for (final WifiPlaceLink link in widget.links) {
+      if (AlexWifiPlaces.normaliseBssid(link.bssid) == bssid) return link;
+    }
+    return null;
+  }
+
+  bool _linkedHere(String bssid) => _linkFor(bssid)?.placeId == widget.place.id;
+
   String _details(CurrentWifi ap, bool connected) {
     WifiAccessPoint? seen;
     for (final WifiAccessPoint s in widget.scan) {
@@ -374,9 +404,14 @@ class _AccessPointsDialogState extends State<_AccessPointsDialog> {
         break;
       }
     }
+    final WifiPlaceLink? link = _linkFor(ap.bssid);
     final List<String> parts = [
       if (connected) 'Connected',
       if (seen != null) ...[seen.band, '${seen.level} dBm'],
+      if (link != null)
+        link.placeId == widget.place.id
+            ? 'linked here'
+            : 'linked to ${link.placeName}',
     ];
     return parts.join(' · ');
   }
@@ -384,6 +419,10 @@ class _AccessPointsDialogState extends State<_AccessPointsDialog> {
   @override
   Widget build(BuildContext context) {
     final String connected = widget.accessPoints.first.bssid;
+    final List<String> unlink = [
+      for (final ap in widget.accessPoints)
+        if (!_selected.contains(ap.bssid) && _linkedHere(ap.bssid)) ap.bssid,
+    ];
     return AlertDialog(
       title: Text('Link ${widget.network}'),
       content: SizedBox(
@@ -394,8 +433,9 @@ class _AccessPointsDialogState extends State<_AccessPointsDialog> {
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
-                'These access points in range use the same network name. Link '
-                'the ones that belong to ${widget.placeName}.',
+                'These access points in range use the same network name. Tick '
+                'the ones that belong to ${widget.place.name}; unticking one '
+                'linked here unlinks it. Ones out of range stay as they are.',
               ),
             ),
             for (final CurrentWifi ap in widget.accessPoints)
@@ -423,13 +463,13 @@ class _AccessPointsDialogState extends State<_AccessPointsDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(
-            context,
-            widget.accessPoints
+          onPressed: () => Navigator.pop<_AccessPointChoice>(context, (
+            link: widget.accessPoints
                 .where((ap) => _selected.contains(ap.bssid))
                 .toList(),
-          ),
-          child: Text('Link ${_selected.length}'),
+            unlink: unlink,
+          )),
+          child: const Text('Save'),
         ),
       ],
     );
@@ -493,7 +533,8 @@ class _PlacePickerSheetState extends ConsumerState<_PlacePickerSheet> {
 
                   final List<DawarichPlace> places = (snapshot.data ?? const [])
                       .where((p) =>
-                          _filter.isEmpty || p.name.toLowerCase().contains(_filter))
+                          _filter.isEmpty ||
+                          p.name.toLowerCase().contains(_filter))
                       .toList();
 
                   if (places.isEmpty) {

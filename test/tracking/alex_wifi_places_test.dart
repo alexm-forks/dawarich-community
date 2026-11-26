@@ -205,6 +205,29 @@ void main() {
       }
     });
 
+    test('link unlinks unticked access points from the target only', () async {
+      final remote = _FakeRemote([
+        place(1, 'Flat',
+            'Flat note\nwifi: aa:bb:cc:00:00:02 Net\nwifi: aa:bb:cc:00:00:09 Net'),
+        place(2, 'Work', 'wifi: aa:bb:cc:00:00:03 Net'),
+      ]);
+
+      await AlexWifiPlacesSync(remote).link(
+        const [CurrentWifi(ssid: 'Net', bssid: 'aa:bb:cc:00:00:01')],
+        remote.places[1]!,
+        // 02 unticked (linked here); 03 linked elsewhere, never ours to drop.
+        unlink: const ['aa:bb:cc:00:00:02', 'aa:bb:cc:00:00:03'],
+      );
+
+      // 09 wasn't in the scan: it stays.
+      expect(
+        remote.places[1]!.note,
+        'Flat note\nwifi: aa:bb:cc:00:00:09 Net\nwifi: aa:bb:cc:00:00:01 Net',
+      );
+      expect(remote.places[2]!.note, 'wifi: aa:bb:cc:00:00:03 Net');
+      expect(await AlexWifiPlaces.linkFor('aa:bb:cc:00:00:02'), isNull);
+    });
+
     test('unlink removes the line and the phone copy', () async {
       final remote = _FakeRemote([
         place(1, 'Home', 'wifi: aa:bb:cc:00:00:01 Net'),

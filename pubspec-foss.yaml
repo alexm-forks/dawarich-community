@@ -18,6 +18,9 @@ dependencies:
   # alex-hack: whether a charger is connected, for the charging boost.
   alex_power:
     path: packages/alex_power
+  # alex-hack: Wi-Fi scan, to link every access point of a network at once.
+  alex_wifi:
+    path: packages/alex_wifi
   connectivity_plus: ^7.3.1
   country: ^6.0.3
   dawarich_android_user_module:

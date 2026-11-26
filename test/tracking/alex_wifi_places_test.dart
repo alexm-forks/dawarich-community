@@ -1,6 +1,7 @@
 // The in-memory preferences store comes with shared_preferences.
 // ignore_for_file: depend_on_referenced_packages
 
+import 'package:alex_wifi/alex_wifi.dart';
 import 'package:dawarich/core/network/dio_client.dart';
 import 'package:dawarich/features/tracking/data/alex_wifi_places_sync.dart';
 import 'package:dawarich/features/tracking/data/preferences/alex_tracking_preferences.dart';
@@ -86,6 +87,59 @@ void main() {
     });
   });
 
+  group('sameNetwork', () {
+    const current = CurrentWifi(ssid: 'Home', bssid: 'aa:bb:cc:00:00:01');
+    WifiAccessPoint ap(
+      String bssid,
+      String ssid, {
+      int level = -60,
+      Duration age = Duration.zero,
+    }) =>
+        WifiAccessPoint(
+          bssid: bssid,
+          ssid: ssid,
+          level: level,
+          frequency: 2437,
+          age: age,
+        );
+
+    test('connected first, then same-name access points by signal', () {
+      final result = AlexWifiPlaces.sameNetwork(current, [
+        ap('AA:BB:CC:00:00:03', 'Home', level: -80),
+        ap('aa:bb:cc:00:00:01', 'Home', level: -40),
+        ap('aa:bb:cc:00:00:02', 'Home', level: -50),
+        ap('aa:bb:cc:00:00:02', 'Home', level: -55),
+        ap('dd:ee:ff:00:00:01', 'Neighbour', level: -30),
+      ]);
+
+      expect(result.map((w) => w.bssid), [
+        'aa:bb:cc:00:00:01',
+        'aa:bb:cc:00:00:02',
+        'aa:bb:cc:00:00:03',
+      ]);
+      expect(result.every((w) => w.ssid == 'Home'), isTrue);
+    });
+
+    test('drops stale and redacted results', () {
+      final result = AlexWifiPlaces.sameNetwork(current, [
+        ap('aa:bb:cc:00:00:02', 'Home', age: const Duration(minutes: 10)),
+        ap('02:00:00:00:00:00', 'Home'),
+      ]);
+
+      expect(result, [current]);
+    });
+
+    test('hidden or unreadable network name gives the connected one only', () {
+      for (final ssid in ['', '<unknown ssid>']) {
+        final wifi = CurrentWifi(ssid: ssid, bssid: 'aa:bb:cc:00:00:01');
+        expect(
+          AlexWifiPlaces.sameNetwork(wifi, [ap('aa:bb:cc:00:00:02', ssid)]),
+          [wifi],
+        );
+      }
+    });
+  });
+
   group('AlexWifiPlacesSync', () {
     test('refresh builds the phone copy from place notes', () async {
       final remote = _FakeRemote([
@@ -108,13 +162,70 @@ void main() {
       ]);
 
       await AlexWifiPlacesSync(remote).link(
-        const CurrentWifi(ssid: 'Net', bssid: 'aa:bb:cc:00:00:01'),
+        const [CurrentWifi(ssid: 'Net', bssid: 'aa:bb:cc:00:00:01')],
         remote.places[2]!,
       );
 
       expect(remote.places[1]!.note, 'Keep me');
       expect(remote.places[2]!.note, 'Flat note\nwifi: aa:bb:cc:00:00:01 Net');
       expect((await AlexWifiPlaces.linkFor('aa:bb:cc:00:00:01'))?.placeName, 'Flat');
+    });
+
+    test('link adds several access points with one note update each', () async {
+      final remote = _FakeRemote([
+        place(1, 'Home', 'Keep me\nwifi: aa:bb:cc:00:00:02 Net'),
+        place(2, 'Flat', 'Flat note'),
+        place(3, 'Work', 'Work note'),
+      ]);
+
+      await AlexWifiPlacesSync(remote).link(
+        const [
+          CurrentWifi(ssid: 'Net', bssid: 'aa:bb:cc:00:00:01'),
+          CurrentWifi(ssid: 'Net', bssid: 'aa:bb:cc:00:00:02'),
+          CurrentWifi(ssid: 'Net', bssid: 'aa:bb:cc:00:00:03'),
+        ],
+        remote.places[2]!,
+      );
+
+      expect(remote.places[1]!.note, 'Keep me');
+      expect(
+        remote.places[2]!.note,
+        'Flat note\n'
+        'wifi: aa:bb:cc:00:00:01 Net\n'
+        'wifi: aa:bb:cc:00:00:02 Net\n'
+        'wifi: aa:bb:cc:00:00:03 Net',
+      );
+      expect(remote.places[3]!.note, 'Work note');
+      expect(remote.updated, [1, 2]);
+      for (final bssid in ['01', '02', '03']) {
+        expect(
+          (await AlexWifiPlaces.linkFor('aa:bb:cc:00:00:$bssid'))?.placeName,
+          'Flat',
+        );
+      }
+    });
+
+    test('link unlinks unticked access points from the target only', () async {
+      final remote = _FakeRemote([
+        place(1, 'Flat',
+            'Flat note\nwifi: aa:bb:cc:00:00:02 Net\nwifi: aa:bb:cc:00:00:09 Net'),
+        place(2, 'Work', 'wifi: aa:bb:cc:00:00:03 Net'),
+      ]);
+
+      await AlexWifiPlacesSync(remote).link(
+        const [CurrentWifi(ssid: 'Net', bssid: 'aa:bb:cc:00:00:01')],
+        remote.places[1]!,
+        // 02 unticked (linked here); 03 linked elsewhere, never ours to drop.
+        unlink: const ['aa:bb:cc:00:00:02', 'aa:bb:cc:00:00:03'],
+      );
+
+      // 09 wasn't in the scan: it stays.
+      expect(
+        remote.places[1]!.note,
+        'Flat note\nwifi: aa:bb:cc:00:00:09 Net\nwifi: aa:bb:cc:00:00:01 Net',
+      );
+      expect(remote.places[2]!.note, 'wifi: aa:bb:cc:00:00:03 Net');
+      expect(await AlexWifiPlaces.linkFor('aa:bb:cc:00:00:02'), isNull);
     });
 
     test('unlink removes the line and the phone copy', () async {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:alex_wifi/alex_wifi.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -116,6 +117,9 @@ final class AlexWifiPlaces {
   /// (no location permission, or location turned off).
   static const String _redactedBssid = '02:00:00:00:00:00';
 
+  /// What Android reports as the network name when it can't be read.
+  static const String _unknownSsid = '<unknown ssid>';
+
   /// How often to record a point at the place while connected.
   static const Duration presenceInterval = Duration(minutes: 15);
 
@@ -197,6 +201,36 @@ final class AlexWifiPlaces {
   static Future<void> setLastPresencePointAt(DateTime time) =>
       SharedPreferencesAsync()
           .setInt(_lastPresenceKey, time.millisecondsSinceEpoch);
+
+  /// Scan results older than this aren't offered for linking: they may be
+  /// from somewhere else.
+  static const Duration maxScanAge = Duration(minutes: 5);
+
+  /// The access points of the network [current] is on, as far as [scan]
+  /// shows: [current] first, then every other recently seen access point
+  /// with the same network name, strongest first, each BSSID once. Mesh
+  /// Wi-Fi and the 2.4/5/6 GHz radios of one router each have their own
+  /// BSSID. A hidden or unreadable network name gives [current] alone.
+  static List<CurrentWifi> sameNetwork(
+    CurrentWifi current,
+    List<WifiAccessPoint> scan,
+  ) {
+    final String ssid = current.ssid;
+    final List<CurrentWifi> result = [current];
+    if (ssid.isEmpty || ssid == _unknownSsid) return result;
+
+    final Set<String> seen = {current.bssid};
+    final List<WifiAccessPoint> matching = scan
+        .where((ap) => ap.ssid == ssid && ap.age <= maxScanAge)
+        .toList()
+      ..sort((a, b) => b.level.compareTo(a.level));
+    for (final WifiAccessPoint ap in matching) {
+      final String bssid = normaliseBssid(ap.bssid);
+      if (bssid.isEmpty || bssid == _redactedBssid || !seen.add(bssid)) continue;
+      result.add(CurrentWifi(ssid: ssid, bssid: bssid));
+    }
+    return result;
+  }
 
   /// The connected Wi-Fi, or null if not on Wi-Fi or the BSSID can't be read.
   static Future<CurrentWifi?> current() async {

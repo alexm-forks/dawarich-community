@@ -1,3 +1,4 @@
+import 'package:alex_wifi/alex_wifi.dart';
 import 'package:dawarich/core/di/providers/core_providers.dart';
 import 'package:dawarich/core/di/providers/session_providers.dart';
 import 'package:dawarich/core/di/providers/usecase_providers.dart';
@@ -126,12 +127,42 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
       showDragHandle: true,
       builder: (_) => const _PlacePickerSheet(),
     );
-    if (place == null) return;
+    if (place == null || !mounted) return;
 
-    final bool ok = await _change((sync) => sync.link(current, place));
+    // The network's other access points in range (mesh Wi-Fi, the 2.4/5/6 GHz
+    // radios of one router) get linked too, after a check: a neighbour can
+    // use the same network name.
+    setState(() => _busy = true);
+    final List<WifiAccessPoint>? scan = await AlexWifi.scan();
+    if (!mounted) return;
+    setState(() => _busy = false);
+
+    List<CurrentWifi> accessPoints =
+        AlexWifiPlaces.sameNetwork(current, scan ?? const []);
+    if (accessPoints.length > 1) {
+      final List<CurrentWifi>? chosen = await showDialog<List<CurrentWifi>>(
+        context: context,
+        builder: (_) => _AccessPointsDialog(
+          network: _wifiLabel(current.ssid),
+          placeName: place.name,
+          accessPoints: accessPoints,
+          scan: scan ?? const [],
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      accessPoints = chosen;
+    }
+
+    final bool ok = await _change((sync) => sync.link(accessPoints, place));
     if (!ok || !mounted) return;
+    final String what = accessPoints.length == 1
+        ? _wifiLabel(current.ssid)
+        : '${accessPoints.length} access points of ${_wifiLabel(current.ssid)}';
+    final String scanNote = scan == null
+        ? ' (couldn\'t scan for its other access points)'
+        : '';
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Linked ${_wifiLabel(current.ssid)} to ${place.name}')),
+      SnackBar(content: Text('Linked $what to ${place.name}$scanNote')),
     );
   }
 
@@ -250,9 +281,11 @@ class _WifiPlacesViewState extends ConsumerState<WifiPlacesView> {
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                       child: Text(
                         'Links are saved in the place\'s note in Dawarich, as '
-                        'a "wifi: <BSSID> <name>" line. Mesh Wi-Fi or several '
-                        'access points: link each one to the same place (connect '
-                        'near it), or add their lines to the note in Dawarich. '
+                        'a "wifi: <BSSID> <name>" line. Linking also offers the '
+                        'network\'s other access points in range (mesh Wi-Fi, a '
+                        'router\'s 2.4/5 GHz radios); untick any that aren\'t '
+                        'this place\'s. For ones out of range, link again near '
+                        'them, or add their lines to the note in Dawarich. '
                         'Only link fixed routers: a phone hotspot or travel '
                         'router moves with you and would pin you to the place.',
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -305,6 +338,100 @@ class _SectionHeader extends StatelessWidget {
           color: theme.colorScheme.primary,
         ),
       ),
+    );
+  }
+}
+
+/// alex-hack: which of a network's access points in range to link. All are
+/// ticked; the connected one (first) can't be unticked.
+class _AccessPointsDialog extends StatefulWidget {
+  final String network;
+  final String placeName;
+  final List<CurrentWifi> accessPoints;
+  final List<WifiAccessPoint> scan;
+
+  const _AccessPointsDialog({
+    required this.network,
+    required this.placeName,
+    required this.accessPoints,
+    required this.scan,
+  });
+
+  @override
+  State<_AccessPointsDialog> createState() => _AccessPointsDialogState();
+}
+
+class _AccessPointsDialogState extends State<_AccessPointsDialog> {
+  late final Set<String> _selected = {
+    for (final ap in widget.accessPoints) ap.bssid,
+  };
+
+  String _details(CurrentWifi ap, bool connected) {
+    WifiAccessPoint? seen;
+    for (final WifiAccessPoint s in widget.scan) {
+      if (AlexWifiPlaces.normaliseBssid(s.bssid) == ap.bssid) {
+        seen = s;
+        break;
+      }
+    }
+    final List<String> parts = [
+      if (connected) 'Connected',
+      if (seen != null) ...[seen.band, '${seen.level} dBm'],
+    ];
+    return parts.join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String connected = widget.accessPoints.first.bssid;
+    return AlertDialog(
+      title: Text('Link ${widget.network}'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'These access points in range use the same network name. Link '
+                'the ones that belong to ${widget.placeName}.',
+              ),
+            ),
+            for (final CurrentWifi ap in widget.accessPoints)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _selected.contains(ap.bssid),
+                onChanged: ap.bssid == connected
+                    ? null
+                    : (value) => setState(() {
+                          if (value == true) {
+                            _selected.add(ap.bssid);
+                          } else {
+                            _selected.remove(ap.bssid);
+                          }
+                        }),
+                title: Text(ap.bssid),
+                subtitle: Text(_details(ap, ap.bssid == connected)),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            widget.accessPoints
+                .where((ap) => _selected.contains(ap.bssid))
+                .toList(),
+          ),
+          child: Text('Link ${_selected.length}'),
+        ),
+      ],
     );
   }
 }

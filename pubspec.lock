@@ -16,6 +16,13 @@ packages:
       relative: true
     source: path
     version: "1.0.0"
+  alex_wifi:
+    dependency: "direct main"
+    description:
+      path: "packages/alex_wifi"
+      relative: true
+    source: path
+    version: "1.0.0"
   analyzer:
     dependency: transitive
     description:

@@ -1,0 +1,19 @@
+name: alex_wifi
+description: alex-hack — the Wi-Fi access points the phone can see (Android), for linking a whole network to a Wi-Fi Place.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.3.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: uk.a09.alexwifi
+        pluginClass: AlexWifiPlugin

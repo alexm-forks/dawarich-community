@@ -38,24 +38,32 @@ final class AlexWifiPlacesSync {
     return byBssid.values.toList();
   }
 
-  /// Links [wifi] to [target]: removes its line from any other place's note,
-  /// adds it to [target]'s (read fresh, so other note edits are kept).
-  Future<List<WifiPlaceLink>> link(CurrentWifi wifi, DawarichPlace target) async {
+  /// Links [accessPoints] to [target]: removes their lines from any other
+  /// place's note, adds them to [target]'s (read fresh, so other note edits
+  /// are kept). One note update per place.
+  Future<List<WifiPlaceLink>> link(
+    List<CurrentWifi> accessPoints,
+    DawarichPlace target,
+  ) async {
+    final Set<String> bssids = {for (final ap in accessPoints) ap.bssid};
+
     for (final DawarichPlace place in await _remote.manualPlaces()) {
       if (place.id == target.id) continue;
-      if (WifiPlaceNote.parse(place.note).any((e) => e.bssid == wifi.bssid)) {
-        await _remote.updateNote(
-          place.id,
-          WifiPlaceNote.remove(place.note, wifi.bssid),
-        );
+      if (WifiPlaceNote.parse(place.note).any((e) => bssids.contains(e.bssid))) {
+        String note = place.note;
+        for (final String bssid in bssids) {
+          note = WifiPlaceNote.remove(note, bssid);
+        }
+        await _remote.updateNote(place.id, note);
       }
     }
 
     final DawarichPlace fresh = await _remote.place(target.id);
-    await _remote.updateNote(
-      target.id,
-      WifiPlaceNote.add(fresh.note, wifi.bssid, wifi.ssid),
-    );
+    String note = fresh.note;
+    for (final CurrentWifi ap in accessPoints) {
+      note = WifiPlaceNote.add(note, ap.bssid, ap.ssid);
+    }
+    await _remote.updateNote(target.id, note);
 
     return refresh();
   }
